@@ -63,10 +63,10 @@ class Event(Positionable, HasColour):
         happened (Array): A boolean flag indicating whether the event happened.
         event_type (Array): The type of event that happened."""
 
-    position: Array = jnp.asarray([-1, -1], dtype=jnp.int32)
-    colour: Array = PALETTE.UNSET
-    happened: Array = jnp.asarray(False, dtype=jnp.bool_)
-    event_type: Array = EventType.NONE
+    position: Array = struct.field(default_factory=lambda: jnp.asarray([-1, -1], dtype=jnp.int32))
+    colour: Array = struct.field(default_factory=lambda: PALETTE.UNSET)
+    happened: Array = struct.field(default_factory=lambda: jnp.asarray(False, dtype=jnp.bool_))
+    event_type: Array = struct.field(default_factory=lambda: EventType.NONE)
 
     def __eq__(self, other: Event) -> Array:
         return jnp.logical_and(
