@@ -140,3 +140,5 @@ dmypy.json
 *_output/
 navix_gpu_demo_output/
 simple_demo_output/
+output/
+tests/output/
