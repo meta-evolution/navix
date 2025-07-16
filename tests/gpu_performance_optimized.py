@@ -13,7 +13,7 @@ import navix as nx
 
 def benchmark_env(env_name, episodes=1000, steps=500):
     """Benchmark environment with internal JIT optimization."""
-    env = nx.make(env_name, observation_fn=nx.observations.symbolic)
+    env = nx.make(env_name, observation_fn=nx.observations.categorical_first_person)
     
     # JIT-compiled functions
     @jax.jit
@@ -29,20 +29,36 @@ def benchmark_env(env_name, episodes=1000, steps=500):
     warmup_keys = jax.random.split(jax.random.PRNGKey(0), 10)
     _ = step_batch(reset_batch(warmup_keys), warmup_keys)
     
+    # 收集观测数据的列表
+    collected_observations = []
+    
     # Benchmark
     start_time = time.time()
     keys = jax.random.split(jax.random.PRNGKey(42), episodes)
     timesteps = reset_batch(keys)
     
+    # 收集初始观测 (已通过环境初始化设置为局部观测)
+    collected_observations.append(timesteps.observation)
+    
     for step in range(steps):
         step_keys = jax.random.split(jax.random.PRNGKey(step), episodes)
         timesteps = step_batch(timesteps, step_keys)
+        # 收集每一步的观测 (已通过环境初始化设置为局部观测)
+        collected_observations.append(timesteps.observation)
     
     duration = time.time() - start_time
     steps_per_sec = (episodes * steps) / duration
     episodes_per_sec = episodes / duration
     
-    print(f"{env_name:20s}: {steps_per_sec:8,.0f} steps/sec, {episodes_per_sec:6,.0f} eps/sec")
+    # 分析并打印观测tensor的整体形状
+    if collected_observations:
+        # 将所有观测堆叠成一个大的tensor
+        stacked_observations = jnp.stack(collected_observations, axis=0)
+        print(f"{env_name:20s}: {steps_per_sec:8,.0f} steps/sec, {episodes_per_sec:6,.0f} eps/sec")
+        print(f"{'':20s}  观测tensor整体形状: {stacked_observations.shape} (时间步数×批次大小×观测维度)")
+    else:
+        print(f"{env_name:20s}: {steps_per_sec:8,.0f} steps/sec, {episodes_per_sec:6,.0f} eps/sec")
+    
     return steps_per_sec, episodes_per_sec
 
 
