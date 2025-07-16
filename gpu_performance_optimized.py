@@ -45,7 +45,7 @@ def benchmark_env(env_name, episodes=1000, steps=500):
 def test_environments():
     """Test multiple environments."""
     envs = ['Navix-Empty-5x5-v0', 'Navix-Empty-8x8-v0', 
-            'Navix-DoorKey-5x5-v0', 'Navix-DoorKey-8x8-v0']
+            'Navix-DoorKey-5x5-v0', 'Navix-DoorKey-8x8-v0', 'Navix-Dynamic-Obstacles-16x16-v0']
     
     print("\nEnvironment Performance:")
     print("-" * 50)
@@ -63,12 +63,12 @@ def test_environments():
 
 def test_batch_scaling():
     """Test batch size scaling."""
-    print("\nBatch Scaling (Navix-Empty-8x8-v0):")
+    print("\nBatch Scaling (Navix-Dynamic-Obstacles-16x16-v0):")
     print("-" * 40)
     
     for batch_size in [100, 1000, 5000, 10000]:
         try:
-            _, eps_per_sec = benchmark_env('Navix-Empty-8x8-v0', batch_size, 20)
+            _, eps_per_sec = benchmark_env('Navix-Dynamic-Obstacles-16x16-v0', batch_size, 20)
             print(f"Batch {batch_size:5d}: {eps_per_sec:8,.0f} eps/sec")
         except Exception as e:
             print(f"Batch {batch_size:5d}: FAILED - {e}")
