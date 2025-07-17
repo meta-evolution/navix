@@ -136,6 +136,7 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
     # Setup visualization if enabled
     viz_env_id = None
     viz_dir = None
+    viz_timestep = None
     if generation is not None:
         from pathlib import Path
         import matplotlib.pyplot as plt
@@ -144,9 +145,13 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
         viz_dir = Path("results") / f"visualization_gen_{generation}"
         viz_dir.mkdir(parents=True, exist_ok=True)
         
-        # Randomly select one environment to visualize (keep consistent throughout episode)
-        viz_key = jax.random.PRNGKey(generation * 1000 + 42)  # Use generation-based seed for consistency
-        viz_env_id = jax.random.randint(viz_key, (), 0, pop_size)
+        # Use a fixed environment ID for consistent visualization across steps
+        # This ensures we track the same environment throughout the episode
+        viz_env_id = 0  # Always use the first environment for consistency
+        print(f"Visualizing environment {viz_env_id} for generation {generation}")
+        
+        # Initialize dedicated visualization timestep to track continuous state evolution
+        viz_timestep = jax.tree.map(lambda x: x[viz_env_id], batch_timesteps)
     
     # Main evaluation loop using optimized batch processing
     for step in range(max_steps):
@@ -166,11 +171,8 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
         
         # Visualization: save image for the selected environment
         if viz_env_id is not None and not done_flags[viz_env_id]:
-            # Get the state of the selected environment from current_timesteps
-            selected_timestep = jax.tree.map(lambda x: x[viz_env_id], current_timesteps)
-            
-            # Get RGB observation from the selected environment state using nx.observations.rgb
-            rgb_obs = nx.observations.rgb(selected_timestep.state)
+            # Get RGB observation from the dedicated visualization timestep
+            rgb_obs = nx.observations.rgb(viz_timestep.state)
             
             # Save visualization image
             img_path = viz_dir / f"step_{step + 1:03d}.png"
@@ -180,6 +182,10 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
             plt.title(f"Generation {generation}, Step {step + 1}, Environment #{viz_env_id}")
             plt.savefig(img_path, bbox_inches='tight', dpi=100)
             plt.close()
+            
+            # Update visualization timestep with the action from the visualization environment
+            viz_action = actions[viz_env_id]
+            viz_timestep = env.step(viz_timestep, viz_action)
         
         # Use combined batch processing function
         _, next_timesteps, goals_reached = process_step_batch(current_timesteps, actions, done_flags)
@@ -221,8 +227,10 @@ def train_step_navix(env, state, max_steps=500, generation=None):
     # Get population size
     popsize = state.model.layers[0].kernel.popsize
     
-    # Initialize batch environments with fixed seed for consistency
-    base_key = jax.random.PRNGKey(42)
+    # Initialize batch environments with generation-specific seed for consistency
+    # Use different seeds for different generations but same seed within a generation
+    # This ensures the same initial conditions for visualization tracking
+    base_key = jax.random.PRNGKey(42 + (generation or 0) * 1000)
     batch_timesteps = initialize_batch_environments(env, popsize, base_key)
     
     # Evaluate population fitness
@@ -283,14 +291,17 @@ def main():
     print(f"Max steps per episode: {args.max_steps}")
     print("-------------------------")
     
-    # Environment setup for dimension calculation
-    env = nx.make('Navix-Dynamic-Obstacles-16x16-v0', observation_fn=nx.observations.symbolic)
+    # Environment setup for dimension calculation with deterministic transitions
+    from navix import transitions
+    env = nx.make('Navix-Dynamic-Obstacles-16x16-v0', 
+                  observation_fn=nx.observations.symbolic,
+                  transitions_fn=transitions.deterministic_transition)
     sample_key = jax.random.PRNGKey(0)
     sample_timestep = env.reset(sample_key)
     
     # Check if visualization is enabled
     if args.visualize:
-        print("Visualization mode enabled")
+        print("Visualization mode enabled - tracking environment 0 for consistent episode visualization")
     
     # Calculate observation size
     obs_size = sample_timestep.observation.size
@@ -325,6 +336,7 @@ def main():
         sampling(state.model)
         
         # Training step (evaluate the sampled population)
+        # Pass generation number for visualization if enabled
         avg_fitness = train_step_navix(env, state, args.max_steps, g if args.visualize else None)
         
         # Track best fitness
