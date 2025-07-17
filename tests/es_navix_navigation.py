@@ -127,6 +127,9 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500):
     
     # Main evaluation loop
     for step in range(max_steps):
+        # Display progress
+        print(f"\rStep {step + 1}/{max_steps}", end="", flush=True)
+        
         # Preprocess observations for all environments
         batch_obs = preprocess_batch_observations(current_timesteps)
         
@@ -153,7 +156,12 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500):
         
         # Early termination if all environments are done
         if jnp.all(done_flags):
+            print()  # New line after progress display
             break
+    
+    # Ensure new line after progress display if loop completes normally
+    if not jnp.all(done_flags):
+        print()
     
     # Return fitness (negative path length, so shorter paths have higher fitness)
     path_lengths = jnp.where(done_flags, step_counts, max_steps)
