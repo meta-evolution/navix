@@ -142,3 +142,18 @@ navix_gpu_demo_output/
 simple_demo_output/
 output/
 tests/output/
+
+# Generated results and data
+results/
+*.png
+*.txt
+*.log
+*.data
+*.pkl
+*.npy
+*.npz
+
+# NeurogenesisTape generated files
+*_results.png
+*_data.txt
+*_model.pkl

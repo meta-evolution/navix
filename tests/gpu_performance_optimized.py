@@ -13,7 +13,9 @@ import navix as nx
 
 def benchmark_env(env_name, episodes=1000, steps=500):
     """Benchmark environment with internal JIT optimization."""
-    env = nx.make(env_name, observation_fn=nx.observations.categorical_first_person)
+    
+    # env = nx.make(env_name, observation_fn=nx.observations.categorical_first_person)  # local observation
+    env = nx.make(env_name, observation_fn=nx.observations.symbolic)    # global observation
     
     # JIT-compiled functions
     @jax.jit
