@@ -115,59 +115,44 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500):
         
         return jax.vmap(step_single)(timesteps, actions)
     
+    @jax.jit
+    def check_goal_reached(timestep):
+        """Check if goal is reached for a single timestep."""
+        return timestep.state.events.goal_reached.happened
+    
+    @jax.jit
+    def update_timestep(old_ts, new_ts, done):
+        """Update timestep only for non-done environments."""
+        return jax.tree.map(lambda old, new: jnp.where(done, old, new), old_ts, new_ts)
+    
     # Main evaluation loop
     for step in range(max_steps):
-        print(f"  Step {step:3d}/{max_steps}: Starting evaluation...")
-        
         # Preprocess observations for all environments
-        print(f"  Step {step:3d}: Preprocessing observations...")
         batch_obs = preprocess_batch_observations(current_timesteps)
         
         # Get actions for all population members using populated_noise_fwd
-        # This returns (pop_size, batch_size, action_size)
-        print(f"  Step {step:3d}: Getting actions via populated_noise_fwd...")
         logits = populated_noise_fwd(agent, batch_obs)  # (pop_size, pop_size, action_size)
         
         # Extract diagonal elements to get each member's action for its own environment
-        # logits shape: (pop_size, pop_size, action_size)
-        # We want member i to act on environment i, so we take diagonal
-        print(f"  Step {step:3d}: Extracting member actions...")
-        member_logits = logits[jnp.arange(pop_size), jnp.arange(pop_size), :]  # (pop_size, action_size)
+        member_logits = jnp.diagonal(logits, axis1=0, axis2=1).T  # (pop_size, action_size)
         actions = jnp.argmax(member_logits, axis=-1)  # (pop_size,)
         
         # Step all environments
-        print(f"  Step {step:3d}: Stepping environments...")
         next_timesteps = step_batch_environments(current_timesteps, actions)
         
         # Check goal reached for all environments
-        print(f"  Step {step:3d}: Checking goal status...")
-        @jax.jit
-        def check_goal_reached(timestep):
-            return timestep.state.events.goal_reached.happened
-        
         goals_reached = jax.vmap(check_goal_reached)(next_timesteps)
         
         # Update done flags and step counts
-        print(f"  Step {step:3d}: Updating flags and counts...")
         new_done = done_flags | goals_reached
         step_counts = jnp.where(~done_flags & goals_reached, step + 1, step_counts)
         done_flags = new_done
         
         # Update current timesteps only for non-done environments
-        print(f"  Step {step:3d}: Updating timesteps...")
-        @jax.jit
-        def update_timestep(old_ts, new_ts, done):
-            return jax.tree.map(lambda old, new: jnp.where(done, old, new), old_ts, new_ts)
-        
         current_timesteps = jax.vmap(update_timestep)(current_timesteps, next_timesteps, done_flags)
-        
-        # Print completion status
-        num_done = jnp.sum(done_flags)
-        print(f"  Step {step:3d}: Completed! {num_done}/{pop_size} environments done")
         
         # Early termination if all environments are done
         if jnp.all(done_flags):
-            print(f"  Step {step:3d}: All environments completed, breaking early")
             break
     
     # Return fitness (negative path length, so shorter paths have higher fitness)
@@ -230,7 +215,8 @@ def main():
     if args.test:
         args.pop = 20
         args.gen = 10
-        print("Running in test mode: pop=20, gen=10")
+        args.max_steps = 50
+        print("Running in test mode: pop=20, gen=10, max_steps=50")
     
     # Device information
     devices = jax.devices()
@@ -294,15 +280,14 @@ def main():
             best_fitness = avg_fitness
         
         # Report progress
-        if g % 10 == 0 or g == 1:
-            avg_path_length = -float(avg_fitness)
-            best_path_length = -float(best_fitness)
-            
-            print(f"[Gen {g:4d}] avg_fitness={float(avg_fitness):8.4f} best_fitness={float(best_fitness):8.4f}")
-            
-            generations.append(g)
-            fitnesses.append(float(avg_fitness))
-            best_fitnesses.append(float(best_fitness))
+        avg_path_length = -float(avg_fitness)
+        best_path_length = -float(best_fitness)
+        
+        print(f"[Gen {g:4d}] avg_fitness={float(avg_fitness):8.4f} best_fitness={float(best_fitness):8.4f}")
+        
+        generations.append(g)
+        fitnesses.append(float(avg_fitness))
+        best_fitnesses.append(float(best_fitness))
     
     print("=" * 70)
     print(f"Training completed! Best fitness: {best_fitness:.4f}")
