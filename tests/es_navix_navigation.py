@@ -68,7 +68,7 @@ def initialize_batch_environments(env, popsize, base_key):
     return batch_timesteps
 
 
-def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500):
+def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, generation=None):
     """Evaluate fitness for the entire population using batch processing.
     
     Args:
@@ -76,6 +76,7 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500):
         agent: ES agent model
         batch_timesteps: Initial timesteps for all environments
         max_steps: Maximum steps per episode
+        generation: Current generation number for visualization
         
     Returns:
         Array of fitness scores for each population member
@@ -132,6 +133,21 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500):
     sample_obs = jax.vmap(preprocess_single)(current_timesteps)
     _ = populated_noise_fwd(agent, sample_obs)  # Trigger initial compilation
     
+    # Setup visualization if enabled
+    viz_env_id = None
+    viz_dir = None
+    if generation is not None:
+        from pathlib import Path
+        import matplotlib.pyplot as plt
+        
+        # Create visualization directory
+        viz_dir = Path("results") / f"visualization_gen_{generation}"
+        viz_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Randomly select one environment to visualize (keep consistent throughout episode)
+        viz_key = jax.random.PRNGKey(generation * 1000 + 42)  # Use generation-based seed for consistency
+        viz_env_id = jax.random.randint(viz_key, (), 0, pop_size)
+    
     # Main evaluation loop using optimized batch processing
     for step in range(max_steps):
         # Display progress every 10 steps to reduce I/O overhead
@@ -147,6 +163,23 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500):
         # Extract diagonal elements to get each member's action for its own environment
         member_logits = jnp.diagonal(logits, axis1=0, axis2=1).T  # (pop_size, action_size)
         actions = jnp.argmax(member_logits, axis=-1)  # (pop_size,)
+        
+        # Visualization: save image for the selected environment
+        if viz_env_id is not None and not done_flags[viz_env_id]:
+            # Get the state of the selected environment from current_timesteps
+            selected_timestep = jax.tree.map(lambda x: x[viz_env_id], current_timesteps)
+            
+            # Get RGB observation from the selected environment state using nx.observations.rgb
+            rgb_obs = nx.observations.rgb(selected_timestep.state)
+            
+            # Save visualization image
+            img_path = viz_dir / f"step_{step + 1:03d}.png"
+            plt.figure(figsize=(8, 8))
+            plt.imshow(rgb_obs)
+            plt.axis('off')
+            plt.title(f"Generation {generation}, Step {step + 1}, Environment #{viz_env_id}")
+            plt.savefig(img_path, bbox_inches='tight', dpi=100)
+            plt.close()
         
         # Use combined batch processing function
         _, next_timesteps, goals_reached = process_step_batch(current_timesteps, actions, done_flags)
@@ -173,13 +206,14 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500):
     return -path_lengths
 
 
-def train_step_navix(env, state, max_steps=500):
+def train_step_navix(env, state, max_steps=500, generation=None):
     """Single training step for Navix navigation using NGT components.
     
     Args:
         env: Navix environment instance
         state: ES optimizer state
         max_steps: Maximum steps per episode
+        generation: Current generation number for visualization
         
     Returns:
         Average fitness
@@ -192,7 +226,7 @@ def train_step_navix(env, state, max_steps=500):
     batch_timesteps = initialize_batch_environments(env, popsize, base_key)
     
     # Evaluate population fitness
-    fitness_scores = evaluate_population_fitness(env, state.model, batch_timesteps, max_steps)
+    fitness_scores = evaluate_population_fitness(env, state.model, batch_timesteps, max_steps, generation)
     
     # Apply centered rank transformation
     fitness_ranked = centered_rank(fitness_scores)
@@ -221,6 +255,7 @@ def main():
     parser.add_argument("--max_steps", type=int, default=500, help="Max steps per episode (default: 500)")
     parser.add_argument("--test", action='store_true', help="Run test mode (pop=20, gen=10)")
     parser.add_argument("--gpu", type=int, help="GPU device ID to use")
+    parser.add_argument("--visualize", action='store_true', help="Enable visualization during training")
     
     args = parser.parse_args()
     
@@ -252,6 +287,10 @@ def main():
     env = nx.make('Navix-Dynamic-Obstacles-16x16-v0', observation_fn=nx.observations.symbolic)
     sample_key = jax.random.PRNGKey(0)
     sample_timestep = env.reset(sample_key)
+    
+    # Check if visualization is enabled
+    if args.visualize:
+        print("Visualization mode enabled")
     
     # Calculate observation size
     obs_size = sample_timestep.observation.size
@@ -286,7 +325,7 @@ def main():
         sampling(state.model)
         
         # Training step (evaluate the sampled population)
-        avg_fitness = train_step_navix(env, state, args.max_steps)
+        avg_fitness = train_step_navix(env, state, args.max_steps, g if args.visualize else None)
         
         # Track best fitness
         if avg_fitness > best_fitness:
