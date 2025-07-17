@@ -91,47 +91,55 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500):
     current_timesteps = batch_timesteps
     
     @jax.jit
-    def preprocess_batch_observations(timesteps):
-        """Preprocess observations for all environments."""
-        @jax.jit
-        def preprocess_single(timestep):
-            obs = timestep.observation
-            position = timestep.state.entities['player'].position.squeeze()
-            direction = timestep.state.entities['player'].direction.squeeze()
-            
-            flat_obs = obs.flatten()
-            norm_pos = position.astype(jnp.float32) / 15.0
-            norm_dir = jnp.array([direction / 3.0], dtype=jnp.float32)
-            return jnp.concatenate([flat_obs, norm_pos, norm_dir])
+    def preprocess_single(timestep):
+        """Preprocess a single observation."""
+        obs = timestep.observation
+        position = timestep.state.entities['player'].position.squeeze()
+        direction = timestep.state.entities['player'].direction.squeeze()
         
-        return jax.vmap(preprocess_single)(timesteps)
+        flat_obs = obs.flatten()
+        norm_pos = position.astype(jnp.float32) / 15.0
+        norm_dir = jnp.array([direction / 3.0], dtype=jnp.float32)
+        return jnp.concatenate([flat_obs, norm_pos, norm_dir])
     
     @jax.jit
-    def step_batch_environments(timesteps, actions):
-        """Step all environments in parallel using vmap."""
-        @jax.jit
-        def step_single(timestep, action):
-            return env.step(timestep, action)
+    def step_single(timestep, action):
+        """Step a single environment."""
+        return env.step(timestep, action)
+    
+    @jax.jit
+    def process_step_batch(timesteps, actions, done_flags):
+        """Combined function for preprocessing, stepping, and updating batch environments."""
+        # Preprocess observations
+        batch_obs = jax.vmap(preprocess_single)(timesteps)
         
-        return jax.vmap(step_single)(timesteps, actions)
+        # Step environments
+        next_timesteps = jax.vmap(step_single)(timesteps, actions)
+        
+        # Check goal reached
+        goals_reached = jax.vmap(lambda ts: ts.state.events.goal_reached.happened)(next_timesteps)
+        
+        # Update timesteps only for non-done environments
+        updated_timesteps = jax.vmap(
+            lambda old_ts, new_ts, done: jax.tree.map(
+                lambda old, new: jnp.where(done, old, new), old_ts, new_ts
+            )
+        )(timesteps, next_timesteps, done_flags)
+        
+        return batch_obs, updated_timesteps, goals_reached
     
-    @jax.jit
-    def check_goal_reached(timestep):
-        """Check if goal is reached for a single timestep."""
-        return timestep.state.events.goal_reached.happened
+    # Pre-compile functions with static shapes to reduce compilation overhead
+    sample_obs = jax.vmap(preprocess_single)(current_timesteps)
+    _ = populated_noise_fwd(agent, sample_obs)  # Trigger initial compilation
     
-    @jax.jit
-    def update_timestep(old_ts, new_ts, done):
-        """Update timestep only for non-done environments."""
-        return jax.tree.map(lambda old, new: jnp.where(done, old, new), old_ts, new_ts)
-    
-    # Main evaluation loop
+    # Main evaluation loop using optimized batch processing
     for step in range(max_steps):
-        # Display progress
-        print(f"\rStep {step + 1}/{max_steps}", end="", flush=True)
+        # Display progress every 10 steps to reduce I/O overhead
+        if step % 10 == 0 or step == max_steps - 1:
+            print(f"\rStep {step + 1}/{max_steps}", end="", flush=True)
         
         # Preprocess observations for all environments
-        batch_obs = preprocess_batch_observations(current_timesteps)
+        batch_obs = jax.vmap(preprocess_single)(current_timesteps)
         
         # Get actions for all population members using populated_noise_fwd
         logits = populated_noise_fwd(agent, batch_obs)  # (pop_size, pop_size, action_size)
@@ -140,19 +148,16 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500):
         member_logits = jnp.diagonal(logits, axis1=0, axis2=1).T  # (pop_size, action_size)
         actions = jnp.argmax(member_logits, axis=-1)  # (pop_size,)
         
-        # Step all environments
-        next_timesteps = step_batch_environments(current_timesteps, actions)
-        
-        # Check goal reached for all environments
-        goals_reached = jax.vmap(check_goal_reached)(next_timesteps)
+        # Use combined batch processing function
+        _, next_timesteps, goals_reached = process_step_batch(current_timesteps, actions, done_flags)
         
         # Update done flags and step counts
         new_done = done_flags | goals_reached
         step_counts = jnp.where(~done_flags & goals_reached, step + 1, step_counts)
         done_flags = new_done
         
-        # Update current timesteps only for non-done environments
-        current_timesteps = jax.vmap(update_timestep)(current_timesteps, next_timesteps, done_flags)
+        # Update current timesteps
+        current_timesteps = next_timesteps
         
         # Early termination if all environments are done
         if jnp.all(done_flags):
@@ -182,7 +187,7 @@ def train_step_navix(env, state, max_steps=500):
     # Get population size
     popsize = state.model.layers[0].kernel.popsize
     
-    # Initialize batch environments
+    # Initialize batch environments with fixed seed for consistency
     base_key = jax.random.PRNGKey(42)
     batch_timesteps = initialize_batch_environments(env, popsize, base_key)
     
