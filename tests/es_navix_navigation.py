@@ -29,6 +29,8 @@ import navix as nx
 from flax import nnx
 import optax
 
+import numpy as np
+
 # Try to import using the ngt alias, fall back to neurogenesistape if needed
 try:
     import ngt
@@ -68,7 +70,7 @@ def initialize_batch_environments(env, popsize, base_key):
     return batch_timesteps
 
 
-def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, generation=None):
+def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, generation=None, seed=42):
     """Evaluate fitness for the entire population using batch processing.
     
     Args:
@@ -145,10 +147,13 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
         viz_dir = Path("results") / f"visualization_gen_{generation}"
         viz_dir.mkdir(parents=True, exist_ok=True)
         
-        # Use a fixed environment ID for consistent visualization across steps
-        # This ensures we track the same environment throughout the episode
-        viz_env_id = 0  # Always use the first environment for consistency
-        print(f"Visualizing environment {viz_env_id} for generation {generation}")
+        # Use a seed-based environment ID for visualization
+        # This ensures different seeds visualize different environments
+        temp_state = np.random.get_state()
+        np.random.seed(seed)  # Use provided seed
+        viz_env_id = np.random.randint(0, pop_size)  # Random environment based on seed
+        np.random.set_state(temp_state)
+        print(f"Visualizing environment {viz_env_id} for generation {generation} (seed-based selection)")
         
         # Initialize dedicated visualization timestep to track continuous state evolution
         viz_timestep = jax.tree.map(lambda x: x[viz_env_id], batch_timesteps)
@@ -212,7 +217,7 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
     return -path_lengths
 
 
-def train_step_navix(env, state, max_steps=500, generation=None):
+def train_step_navix(env, state, max_steps=500, generation=None, seed=42):
     """Single training step for Navix navigation using NGT components.
     
     Args:
@@ -230,11 +235,19 @@ def train_step_navix(env, state, max_steps=500, generation=None):
     # Initialize batch environments with generation-specific seed for consistency
     # Use different seeds for different generations but same seed within a generation
     # This ensures the same initial conditions for visualization tracking
-    base_key = jax.random.PRNGKey(42 + (generation or 0) * 1000)
+    if generation is None:
+        numpy_seed = np.random.randint(0, 2**31)
+    else:
+        # Use numpy to generate deterministic but different seeds for each generation
+        temp_state = np.random.get_state()
+        np.random.seed(42 + generation * 1000)
+        numpy_seed = np.random.randint(0, 2**31)
+        np.random.set_state(temp_state)
+    base_key = jax.random.PRNGKey(numpy_seed)
     batch_timesteps = initialize_batch_environments(env, popsize, base_key)
     
     # Evaluate population fitness
-    fitness_scores = evaluate_population_fitness(env, state.model, batch_timesteps, max_steps, generation)
+    fitness_scores = evaluate_population_fitness(env, state.model, batch_timesteps, max_steps, generation, seed)
     
     # Apply centered rank transformation
     fitness_ranked = centered_rank(fitness_scores)
@@ -264,8 +277,13 @@ def main():
     parser.add_argument("--test", action='store_true', help="Run test mode (pop=20, gen=10)")
     parser.add_argument("--gpu", type=int, help="GPU device ID to use")
     parser.add_argument("--visualize", action='store_true', help="Enable visualization during training")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42)")
     
     args = parser.parse_args()
+    
+    # Set numpy random seed for reproducibility
+    np.random.seed(args.seed)
+    print(f"Set numpy random seed to: {args.seed}")
     
     # Test mode override
     if args.test:
@@ -296,7 +314,9 @@ def main():
     env = nx.make('Navix-Dynamic-Obstacles-16x16-v0', 
                   observation_fn=nx.observations.symbolic,
                   transitions_fn=transitions.deterministic_transition)
-    sample_key = jax.random.PRNGKey(0)
+    # Use numpy to generate seed for environment sampling
+    numpy_seed = np.random.randint(0, 2**31)
+    sample_key = jax.random.PRNGKey(numpy_seed)
     sample_timestep = env.reset(sample_key)
     
     # Check if visualization is enabled
@@ -314,7 +334,9 @@ def main():
     
     # Create ES agent using NGT's ES_MLP
     layer_sizes = [total_obs_size, args.hidden, args.hidden, action_size]
-    rngs = nnx.Rngs(42)
+    # Use numpy to generate seed for model initialization
+    numpy_seed = np.random.randint(0, 2**31)
+    rngs = nnx.Rngs(numpy_seed)
     agent = ES_MLP(layer_sizes, rngs)
     agent.set_attributes(popsize=cfg.pop_size, noise_sigma=cfg.sigma)
     
@@ -337,7 +359,7 @@ def main():
         
         # Training step (evaluate the sampled population)
         # Pass generation number for visualization if enabled
-        avg_fitness = train_step_navix(env, state, args.max_steps, g if args.visualize else None)
+        avg_fitness = train_step_navix(env, state, args.max_steps, g if args.visualize else None, args.seed)
         
         # Track best fitness
         if avg_fitness > best_fitness:
