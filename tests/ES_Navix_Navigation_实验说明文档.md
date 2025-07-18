@@ -122,6 +122,18 @@ python es_navix_navigation.py --visualize --gen 50
 python es_navix_navigation.py --gpu 0 --pop 500
 ```
 
+### 小参数快速训练（适合调试和初步验证）
+```bash
+# 最小参数配置 - 快速测试
+python es_navix_navigation.py --gen 1 --pop 5 --max_steps 100
+
+# 轻量级训练 - 适合资源受限环境
+python es_navix_navigation.py --gen 2 --pop 5 --lr 0.02 --sigma 0.05
+
+# 小参数可视化训练
+python es_navix_navigation.py --gen 2 --pop 5 --visualize --max_steps 200
+```
+
 ## 输出结果
 
 ### 训练过程输出
