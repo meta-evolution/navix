@@ -172,9 +172,18 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
         
         # Extract diagonal elements to get each member's action for its own environment
         member_logits = jnp.diagonal(logits, axis1=0, axis2=1).T  # (pop_size, action_size)
-        actions = jnp.argmax(member_logits, axis=-1)  # (pop_size,)
         
-
+        # Use random sampling instead of argmax for better exploration
+        action_keys = jax.random.split(jax.random.PRNGKey(step + generation * 1000 if generation else step), pop_size)
+        actions = jax.vmap(lambda key, logits: jax.random.categorical(key, logits))(action_keys, member_logits)
+        
+        # Command line output for agent status (show every step for debugging)
+        if viz_env_id is not None:
+            current_pos = current_timesteps.state.entities['player'].position[viz_env_id].squeeze()
+            current_dir = current_timesteps.state.entities['player'].direction[viz_env_id].squeeze()
+            selected_action = actions[viz_env_id]
+            action_probs = jax.nn.softmax(member_logits[viz_env_id])
+            print(f"\n[Step {step+1}] Env {viz_env_id}: Pos=({current_pos[0]},{current_pos[1]}), Dir={current_dir}, Action={selected_action}, Probs={action_probs}")
         
         # Visualization: save image for the selected environment
         if viz_env_id is not None and not done_flags[viz_env_id]:
