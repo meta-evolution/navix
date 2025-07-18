@@ -1,4 +1,4 @@
-"""ES algorithm for Navix navigation training using neurogenesistape."""
+"""ES algorithm for Navix navigation training using neurogenesistape with stochastic action selection."""
 
 import argparse
 import sys
@@ -70,8 +70,8 @@ def initialize_batch_environments(env, popsize, base_key):
     return batch_timesteps
 
 
-def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, generation=None, seed=42):
-    """Evaluate fitness for the entire population using batch processing.
+def evaluate_population_fitness_stochastic(env, agent, batch_timesteps, max_steps=500, generation=None, seed=42, temperature=1.0):
+    """Evaluate fitness for the entire population using batch processing with stochastic action selection.
     
     Args:
         env: Navix environment instance
@@ -79,6 +79,8 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
         batch_timesteps: Initial timesteps for all environments
         max_steps: Maximum steps per episode
         generation: Current generation number for visualization
+        seed: Random seed for reproducibility
+        temperature: Temperature for softmax sampling (higher = more random)
         
     Returns:
         Array of fitness scores for each population member
@@ -144,7 +146,7 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
         import matplotlib.pyplot as plt
         
         # Create visualization directory
-        viz_dir = Path("results") / f"visualization_gen_{generation}"
+        viz_dir = Path("results") / f"visualization_gen_{generation}_stochastic"
         viz_dir.mkdir(parents=True, exist_ok=True)
         
         # Use a seed-based environment ID for visualization
@@ -153,15 +155,18 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
         np.random.seed(seed)  # Use provided seed
         viz_env_id = np.random.randint(0, pop_size)  # Random environment based on seed
         np.random.set_state(temp_state)
-        print(f"Visualizing environment {viz_env_id} for generation {generation} (seed-based selection)")
+        print(f"Visualizing environment {viz_env_id} for generation {generation} (seed-based selection, stochastic policy)")
         
         # Initialize dedicated visualization timestep to track continuous state evolution
         viz_timestep = jax.tree.map(lambda x: x[viz_env_id], batch_timesteps)
     
+    # Create random key for stochastic action sampling
+    action_key = jax.random.PRNGKey(seed + (generation or 0) * 1000)
+    
     # Main evaluation loop using optimized batch processing
     for step in range(max_steps):
-        # Display progress every 50 steps to reduce I/O overhead
-        if step % 50 == 0 or step == max_steps - 1:
+        # Display progress every 10 steps to reduce I/O overhead
+        if step % 10 == 0 or step == max_steps - 1:
             print(f"\rStep {step + 1}/{max_steps}", end="", flush=True)
         
         # Preprocess observations for all environments
@@ -172,9 +177,19 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
         
         # Extract diagonal elements to get each member's action for its own environment
         member_logits = jnp.diagonal(logits, axis1=0, axis2=1).T  # (pop_size, action_size)
-        actions = jnp.argmax(member_logits, axis=-1)  # (pop_size,)
         
-
+        # STOCHASTIC ACTION SELECTION: Sample from probability distribution instead of argmax
+        # Apply temperature scaling for exploration control
+        scaled_logits = member_logits / temperature
+        
+        # Generate random keys for each environment
+        action_key, *env_keys = jax.random.split(action_key, pop_size + 1)
+        env_keys = jnp.array(env_keys)
+        
+        # Sample actions from categorical distribution
+        actions = jax.vmap(lambda logits, key: jax.random.categorical(key, logits))(
+            scaled_logits, env_keys
+        )
         
         # Visualization: save image for the selected environment
         if viz_env_id is not None and not done_flags[viz_env_id]:
@@ -186,7 +201,7 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
             plt.figure(figsize=(8, 8))
             plt.imshow(rgb_obs)
             plt.axis('off')
-            plt.title(f"Generation {generation}, Step {step + 1}, Environment #{viz_env_id}")
+            plt.title(f"Generation {generation}, Step {step + 1}, Environment #{viz_env_id} (Stochastic)")
             plt.savefig(img_path, bbox_inches='tight', dpi=100)
             plt.close()
             
@@ -219,14 +234,16 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
     return -path_lengths
 
 
-def train_step_navix(env, state, max_steps=500, generation=None, seed=42):
-    """Single training step for Navix navigation using NGT components.
+def train_step_navix_stochastic(env, state, max_steps=500, generation=None, seed=42, temperature=1.0):
+    """Single training step for Navix navigation using NGT components with stochastic action selection.
     
     Args:
         env: Navix environment instance
         state: ES optimizer state
         max_steps: Maximum steps per episode
         generation: Current generation number for visualization
+        seed: Random seed for reproducibility
+        temperature: Temperature for softmax sampling
         
     Returns:
         Average fitness
@@ -248,8 +265,8 @@ def train_step_navix(env, state, max_steps=500, generation=None, seed=42):
     base_key = jax.random.PRNGKey(numpy_seed)
     batch_timesteps = initialize_batch_environments(env, popsize, base_key)
     
-    # Evaluate population fitness
-    fitness_scores = evaluate_population_fitness(env, state.model, batch_timesteps, max_steps, generation, seed)
+    # Evaluate population fitness with stochastic action selection
+    fitness_scores = evaluate_population_fitness_stochastic(env, state.model, batch_timesteps, max_steps, generation, seed, temperature)
     
     # Apply centered rank transformation
     fitness_ranked = centered_rank(fitness_scores)
@@ -263,19 +280,20 @@ def train_step_navix(env, state, max_steps=500, generation=None, seed=42):
     return jnp.mean(fitness_scores)
 
 
-# Simplified ES implementation using NGT's built-in components
+# Simplified ES implementation using NGT's built-in components with stochastic action selection
 
 
 def main():
-    """Main training function using NGT ES components."""
+    """Main training function using NGT ES components with stochastic action selection."""
     # Command line arguments
-    parser = argparse.ArgumentParser(description='ES-based Navix Navigation Training using NGT')
+    parser = argparse.ArgumentParser(description='ES-based Navix Navigation Training using NGT with Stochastic Action Selection')
     parser.add_argument("--hidden", type=int, default=128, help="Hidden layer size (default: 128)")
     parser.add_argument("--gen", type=int, default=100, help="Number of generations (default: 100)")
     parser.add_argument("--pop", type=int, default=200, help="Population size (default: 200, must be even)")
     parser.add_argument("--lr", type=float, default=0.01, help="Learning rate (default: 0.01)")
     parser.add_argument("--sigma", type=float, default=0.1, help="Initial noise std (default: 0.1)")
     parser.add_argument("--max_steps", type=int, default=500, help="Max steps per episode (default: 500)")
+    parser.add_argument("--temperature", type=float, default=1.0, help="Temperature for stochastic action sampling (default: 1.0)")
     parser.add_argument("--test", action='store_true', help="Run test mode (pop=20, gen=10)")
     parser.add_argument("--gpu", type=int, help="GPU device ID to use")
     parser.add_argument("--visualize", action='store_true', help="Enable visualization during training")
@@ -294,11 +312,6 @@ def main():
         args.max_steps = 50
         print("Running in test mode: pop=20, gen=10, max_steps=50")
     
-    # Ensure population size is even (required for symmetric noise in ES)
-    if args.pop % 2 != 0:
-        args.pop += 1
-        print(f"Population size adjusted to {args.pop} (must be even for symmetric noise)")
-    
     # Device information
     devices = jax.devices()
     print(f"JAX {jax.__version__} on {jax.default_backend()} ({len(jax.devices('gpu'))} GPUs)")
@@ -314,6 +327,8 @@ def main():
     print(f"Learning rate: {args.lr}")
     print(f"Noise sigma: {args.sigma}")
     print(f"Max steps per episode: {args.max_steps}")
+    print(f"Action sampling temperature: {args.temperature}")
+    print(f"Action selection: STOCHASTIC (categorical sampling)")
     print("-------------------------")
     
     # Environment setup for dimension calculation with deterministic transitions
@@ -328,19 +343,14 @@ def main():
     
     # Check if visualization is enabled
     if args.visualize:
-        print("Visualization mode enabled - tracking environment 0 for consistent episode visualization")
+        print("Visualization mode enabled - tracking environment 0 for consistent episode visualization (stochastic policy)")
     
     # Calculate observation size
     obs_size = sample_timestep.observation.size
     agent_pos_size = 2  # x, y position
     agent_dir_size = 1  # direction
     total_obs_size = obs_size + agent_pos_size + agent_dir_size
-    
-    # Get actual action space size from environment
-    actual_action_size = env.action_space.maximum.item() + 1
-    action_size = actual_action_size
-    
-
+    action_size = 4  # Navix has 4 actions: forward, left, right, stay
     
     print(f"Observation size: {total_obs_size}, Action size: {action_size}")
     
@@ -356,7 +366,7 @@ def main():
     tx = optax.chain(optax.scale(-1), optax.sgd(cfg.lr))
     state = ES_Optimizer(agent, tx, wrt=nnx.Param)
     
-    print(f"\nStarting ES training: generations={cfg.generations}, population={cfg.pop_size}")
+    print(f"\nStarting ES training with STOCHASTIC action selection: generations={cfg.generations}, population={cfg.pop_size}")
     print("=" * 70)
     
     # Training loop
@@ -369,9 +379,9 @@ def main():
         # Sample noise for population at the beginning of each generation
         sampling(state.model)
         
-        # Training step (evaluate the sampled population)
+        # Training step (evaluate the sampled population) with stochastic action selection
         # Pass generation number for visualization if enabled
-        avg_fitness = train_step_navix(env, state, args.max_steps, g if args.visualize else None, args.seed)
+        avg_fitness = train_step_navix_stochastic(env, state, args.max_steps, g if args.visualize else None, args.seed, args.temperature)
         
         # Track best fitness
         if avg_fitness > best_fitness:
@@ -398,18 +408,18 @@ def main():
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
     
     # Plot 1: Average fitness
-    ax1.plot(generations, fitnesses, 'b-', linewidth=2, label='Average Fitness')
+    ax1.plot(generations, fitnesses, 'b-', linewidth=2, label='Average Fitness (Stochastic)')
     ax1.set_xlabel('Generation')
     ax1.set_ylabel('Fitness')
-    ax1.set_title('Average Fitness Over Generations')
+    ax1.set_title('Average Fitness Over Generations (Stochastic Policy)')
     ax1.grid(True, alpha=0.3)
     ax1.legend()
     
     # Plot 2: Best fitness
-    ax2.plot(generations, best_fitnesses, 'r--', linewidth=2, label='Best Fitness')
+    ax2.plot(generations, best_fitnesses, 'r--', linewidth=2, label='Best Fitness (Stochastic)')
     ax2.set_xlabel('Generation')
     ax2.set_ylabel('Fitness')
-    ax2.set_title('Best Fitness Over Generations')
+    ax2.set_title('Best Fitness Over Generations (Stochastic Policy)')
     ax2.grid(True, alpha=0.3)
     ax2.legend()
     
@@ -417,18 +427,19 @@ def main():
     
     # Save plot
     mode_str = "test" if args.test else "train"
-    filename = f"es_navix_h{args.hidden}_g{args.gen}_p{args.pop}_results.png"
+    filename = f"es_navix_stochastic_h{args.hidden}_g{args.gen}_p{args.pop}_t{args.temperature}_results.png"
     filepath = results_dir / filename
     plt.savefig(filepath, dpi=300, bbox_inches='tight')
     print(f"Results plot saved to: {filepath}")
     
     # Save data
-    data_filename = f"es_navix_h{args.hidden}_g{args.gen}_p{args.pop}_data.txt"
+    data_filename = f"es_navix_stochastic_h{args.hidden}_g{args.gen}_p{args.pop}_t{args.temperature}_data.txt"
     data_filepath = results_dir / data_filename
     
     with open(data_filepath, 'w') as f:
-        f.write("# ES Navix Navigation Training Results\n")
+        f.write("# ES Navix Navigation Training Results (Stochastic Action Selection)\n")
         f.write(f"# Hidden size: {args.hidden}, Generations: {args.gen}, Population: {args.pop}\n")
+        f.write(f"# Temperature: {args.temperature}, Action selection: Stochastic\n")
         f.write(f"# Final best fitness: {best_fitness:.4f}\n")
         f.write("# Generation\tAvg_Fitness\tBest_Fitness\n")
         for i in range(len(generations)):
