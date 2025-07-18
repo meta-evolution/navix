@@ -23,6 +23,8 @@ setup_gpu_from_args()
 
 import jax
 import jax.numpy as jnp
+import matplotlib
+matplotlib.use('Agg')  # Set non-interactive backend for headless environments
 import matplotlib.pyplot as plt
 from pathlib import Path
 import navix as nx
@@ -173,17 +175,27 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
         # Extract diagonal elements to get each member's action for its own environment
         member_logits = jnp.diagonal(logits, axis1=0, axis2=1).T  # (pop_size, action_size)
         
-        # Use random sampling instead of argmax for better exploration
+        # EXPERIMENT: Force forward action (index 2) to have 90% probability for testing
+        # Create custom probability distribution: forward=0.9, others=0.1/6 each
+        forced_probs = jnp.zeros_like(member_logits)
+        forced_probs = forced_probs.at[:, 2].set(0.9)  # Forward action gets 90%
+        other_prob = 0.1 / 6  # Remaining 10% split among other 6 actions
+        for i in range(7):
+            if i != 2:  # Skip forward action
+                forced_probs = forced_probs.at[:, i].set(other_prob)
+        
+        # Use forced probabilities instead of model logits
         action_keys = jax.random.split(jax.random.PRNGKey(step + generation * 1000 if generation else step), pop_size)
-        actions = jax.vmap(lambda key, logits: jax.random.categorical(key, logits))(action_keys, member_logits)
+        actions = jax.vmap(lambda key, probs: jax.random.categorical(key, jnp.log(probs)))(action_keys, forced_probs)
         
         # Command line output for agent status (show every step for debugging)
         if viz_env_id is not None:
             current_pos = current_timesteps.state.entities['player'].position[viz_env_id].squeeze()
             current_dir = current_timesteps.state.entities['player'].direction[viz_env_id].squeeze()
             selected_action = actions[viz_env_id]
-            action_probs = jax.nn.softmax(member_logits[viz_env_id])
-            print(f"\n[Step {step+1}] Env {viz_env_id}: Pos=({current_pos[0]},{current_pos[1]}), Dir={current_dir}, Action={selected_action}, Probs={action_probs}")
+            print(f"\n[Step {step+1}] Env {viz_env_id}: Pos=({current_pos[0]},{current_pos[1]}), Dir={current_dir}, Action={selected_action}, Probs={forced_probs[viz_env_id]}")
+            print(f"[Step {step+1}] Forward action (index 2) probability: {forced_probs[viz_env_id][2]:.1%}")
+            print(f"[Step {step+1}] Original model forward probability: {jax.nn.softmax(member_logits[viz_env_id])[2]:.4%}")
         
         # Visualization: save image for the selected environment
         if viz_env_id is not None and not done_flags[viz_env_id]:
