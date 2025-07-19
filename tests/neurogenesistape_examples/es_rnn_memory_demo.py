@@ -5,6 +5,7 @@ sys.path.append('/root/workspace/navix/tests')
 
 import jax
 import jax.numpy as jnp
+import time
 from neurogenesistape.modules.es.nn import ES_RNN
 from neurogenesistape.modules.es.optimizer import ES_Optimizer
 from neurogenesistape.modules.evolution import sampling, calculate_gradients, centered_rank
@@ -71,6 +72,7 @@ def generate_batch_data(key, batch_size=16, seq_len=5):
     
     return sequences, targets
 
+@jax.jit
 def compute_fitness(outputs, targets):
     def _fitness(_outputs, _targets):
         logits = _outputs[:, -1, :]
@@ -82,24 +84,62 @@ def compute_fitness(outputs, targets):
     fitness_values = jax.vmap(_fitness, in_axes=(0, None))(outputs, targets)
     return fitness_values
 
+@jax.jit
+def compute_accuracy(logits, targets):
+    """JIT-compiled accuracy computation."""
+    predictions = jnp.argmax(logits, axis=-1)
+    return jnp.mean(predictions == targets)
+
+@jax.jit
+def compute_metrics(outputs, targets, fitness):
+    """JIT-compiled metrics computation."""
+    best_idx = jnp.argmax(fitness)
+    best_output = outputs[best_idx]
+    best_logits = best_output[:, -1, :]
+    accuracy = compute_accuracy(best_logits, targets)
+    return best_idx, best_logits, accuracy
+
+@jax.jit
+def compute_fitness_and_grads(outputs, targets, fitness_ranked):
+    """JIT-compiled fitness and gradient computation."""
+    fitness = compute_fitness(outputs, targets)
+    avg_fitness = jnp.mean(fitness)
+    return avg_fitness, fitness
+
 def train_step(state, batch_x, batch_y, generation=0):
+    # 1. 重置隐藏状态
     state.model.reset_hidden(batch_x.shape[0])
+    
+    # 2. 采样噪声
     sampling(state.model)
+    
+    # 3. 前向传播
     outputs = populated_noise_fwd(state.model, batch_x)
     
+    # 4. 计算适应度
     fitness = compute_fitness(outputs, batch_y)
     avg_fitness = jnp.mean(fitness)
+    
+    # 5. 排序适应度
     fitness_ranked = centered_rank(fitness)
+    
+    # 6. 计算梯度
     grads = calculate_gradients(state.model, fitness_ranked)
+    
+    # 7. 更新参数
     state.update(grads)
     
     return avg_fitness, grads, outputs, fitness
 
 def main():
+    # 极端测试配置：更大的种群和更多代数
     config = {
-        'input_size': 1, 'hidden_size': 128, 'output_size': 4,
-        'popsize': 2000, 'generations': 1000, 'learning_rate': 0.05, 'sigma': 0.05
+        'input_size': 1, 'hidden_size': 256, 'output_size': 4,
+        'popsize': 2000, 'generations': 5000, 'learning_rate': 0.05, 'sigma': 0.04
     }
+    
+    print(f"开始极端规模测试: 种群大小={config['popsize']}, 代数={config['generations']}, 隐藏层大小={config['hidden_size']}")
+    print("JIT优化已启用，预期显著提升性能...\n")
     
     key = jax.random.PRNGKey(21)
     rngs = nnx.Rngs(key)
@@ -121,47 +161,15 @@ def main():
     print("\n开始ES训练...\n")
     
     for gen in range(1, config['generations'] + 1):
-        if gen == 1:
-            old_params = state.model.i2h.kernel.grad_variable.value.copy()
-        
         avg_fitness, grads, outputs, fitness = train_step(state, train_data, train_targets, gen)
         
-        best_idx = jnp.argmax(fitness)
-        best_output = outputs[best_idx]
-        best_logits = best_output[:, -1, :]
+        # 使用JIT优化的指标计算
+        best_idx, best_logits, accuracy = compute_metrics(outputs, train_targets, fitness)
         
-        if gen <= 20 or gen % 10 == 0:
-            new_params = state.model.i2h.kernel.grad_variable.value
-            param_change = jnp.max(jnp.abs(new_params - old_params))
-            grad_norm = jnp.sqrt(sum(jnp.sum(g**2) for g in jax.tree.leaves(grads)))
-            
-            # 计算准确率
-            best_predictions = jnp.argmax(best_logits, axis=-1)
-            accuracy = jnp.mean(best_predictions == train_targets)
-            
-            # 调试信息：检查维度和数值
-            if gen <= 3:
-                print(f"调试信息 - Gen {gen}:")
-                print(f"  best_logits.shape: {best_logits.shape}")
-                print(f"  train_targets.shape: {train_targets.shape}")
-                print(f"  best_predictions[:5]: {best_predictions[:5]}")
-                print(f"  train_targets[:5]: {train_targets[:5]}")
-                print(f"  best_logits[:3]: {best_logits[:3]}")
-                
-                # 重新计算MSE来验证
-                targets_onehot = jax.nn.one_hot(train_targets, num_classes=4)
-                mse_manual = jnp.mean((best_logits - targets_onehot) ** 2)
-                print(f"  手动计算MSE: {mse_manual:.6f}")
-                print(f"  最佳适应度: {fitness[best_idx]:.6f}")
-                print()
-            
-            print(f"Gen {gen:3d}: avg={avg_fitness:8.6f}, accuracy={accuracy:.4f}, param_change={param_change:.8f}, grad_norm={grad_norm:.8f}")
-            print(f"         最佳适应度: {fitness[best_idx]:.6f}")
-            old_params = new_params.copy()
-        else:
-            best_predictions = jnp.argmax(best_logits, axis=-1)
-            accuracy = jnp.mean(best_predictions == train_targets)
-            print(f"Gen {gen:3d}: avg={avg_fitness:8.6f}, accuracy={accuracy:.4f}, 最佳适应度: {fitness[best_idx]:.6f}")
+        if gen % 10 == 0 or gen <= 5:
+            print(f"Gen {gen:3d}: avg={avg_fitness:8.6f}, accuracy={accuracy:.4f}, best={fitness[best_idx]:.6f}")
+        elif gen == config['generations']:
+            print(f"Final Gen {gen}: avg={avg_fitness:8.6f}, accuracy={accuracy:.4f}, best={fitness[best_idx]:.6f}")
 
 if __name__ == "__main__":
     main()
