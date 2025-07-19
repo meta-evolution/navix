@@ -107,26 +107,23 @@ def compute_fitness_and_grads(outputs, targets, fitness_ranked):
     return avg_fitness, fitness
 
 def train_step(state, batch_x, batch_y, generation=0):
-    # 1. 重置隐藏状态
-    state.model.reset_hidden(batch_x.shape[0])
-    
-    # 2. 采样噪声
+    # 1. 采样噪声
     sampling(state.model)
     
-    # 3. 前向传播
+    # 2. 前向传播
     outputs = populated_noise_fwd(state.model, batch_x)
     
-    # 4. 计算适应度
+    # 3. 计算适应度
     fitness = compute_fitness(outputs, batch_y)
     avg_fitness = jnp.mean(fitness)
     
-    # 5. 排序适应度
+    # 4. 排序适应度
     fitness_ranked = centered_rank(fitness)
     
-    # 6. 计算梯度
+    # 5. 计算梯度
     grads = calculate_gradients(state.model, fitness_ranked)
     
-    # 7. 更新参数
+    # 6. 更新参数
     state.update(grads)
     
     return avg_fitness, grads, outputs, fitness
