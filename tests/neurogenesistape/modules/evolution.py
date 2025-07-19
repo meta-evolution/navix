@@ -52,7 +52,7 @@ class EvoModule(nnx.Module):
 # ----- Vectorization Utilities -----
 
 others = (nnx.RngCount, nnx.RngKey)
-state_axes = nnx.StateAxes({nnx.Param: None, Populated_Variable: 0, Grad_variable: None, others: None})
+state_axes = nnx.StateAxes({nnx.Param: None, Populated_Variable: 0, Grad_variable: None, nnx.Variable: None, others: None})
 
 
 @nnx.vmap(in_axes=(state_axes, None))
@@ -106,7 +106,7 @@ def calculate_gradients(model: nnx.Module, fitness):
         if isinstance(i, EvoModule):
             i.estimate(fitness)
 
-    return nnx.state(model, Grad_variable)
+    return nnx.state(model, nnx.Param)
 
 
 def centered_rank(x):
