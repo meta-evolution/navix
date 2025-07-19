@@ -4,7 +4,7 @@
 from neurogenesistape.modules.es.core import ES_Module, ES_Tape
 
 # Import neural network components
-from neurogenesistape.modules.es.nn import ES_Linear, ES_MLP, ES_RNN
+from neurogenesistape.modules.es.nn import ES_Linear, ES_MLP
 
 # Import optimizer
 from neurogenesistape.modules.es.optimizer import ES_Optimizer
@@ -17,7 +17,7 @@ __all__ = [
     'ES_Module', 'ES_Tape',
     
     # Neural network components
-    'ES_Linear', 'ES_MLP', 'ES_RNN',
+    'ES_Linear', 'ES_MLP',
     
     # Optimizer
     'ES_Optimizer',

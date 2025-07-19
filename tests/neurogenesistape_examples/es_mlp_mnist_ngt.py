@@ -25,12 +25,11 @@ import jax
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-# Try to import using the ngt alias, fall back to neurogenesistape if needed
-try:
-    import ngt
-except ImportError:
-    print("Warning: Could not import ngt directly, using neurogenesistape instead")
-    import neurogenesistape as ngt
+# Add the tests directory to Python path to use local neurogenesistape instead of pip-installed version
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+
+# Import neurogenesistape from local tests directory as ngt
+import neurogenesistape as ngt
 
 # Import components
 from ngt import (

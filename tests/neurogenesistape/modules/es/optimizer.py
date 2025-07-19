@@ -85,7 +85,7 @@ def _grad_to_param(x: nnx.State) -> nnx.State:
     """
     def _fn(x):
         param_state = nnx.VariableState(nnx.Param, x['grad_variable'].value)
-        return {'grad_variable': param_state}
+        return {'kernel_trainable': param_state}
         
     def _is_leaf(x) -> bool:
         if isinstance(x, Dict):
@@ -112,10 +112,13 @@ class ES_Optimizer(nnx.Optimizer):
             **kwargs: Additional keyword arguments for the optimizer
         """
         params = nnx.state(self.model, self.wrt)
+        # grads = _grad_to_param(grads)
         opt_state = _opt_state_variables_to_state(self.opt_state)
 
-        # Direct update without conversion
+        # Params : [..tree..]{'kernel_trainable': {type = Param}}
+        # Updates: [..tree..]{'grad_variable': {type = Grad_Variable}}
         updates, new_opt_state = self.tx.update(grads, opt_state, params, **kwargs) 
+        updates = _grad_to_param(updates)
         new_params = optax.apply_updates(params, updates)
         assert isinstance(new_params, nnx.State)
 
