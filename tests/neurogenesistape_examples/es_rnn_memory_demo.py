@@ -6,6 +6,8 @@ sys.path.append('/root/workspace/navix/tests')
 import jax
 import jax.numpy as jnp
 import time
+import matplotlib.pyplot as plt
+import numpy as np
 from neurogenesistape.modules.es.nn import ES_RNN
 from neurogenesistape.modules.es.optimizer import ES_Optimizer
 from neurogenesistape.modules.evolution import sampling, calculate_gradients, centered_rank
@@ -106,6 +108,89 @@ def compute_fitness_and_grads(outputs, targets, fitness_ranked):
     avg_fitness = jnp.mean(fitness)
     return avg_fitness, fitness
 
+def create_training_visualization(generations, best_fitness_history, accuracy_history):
+    """
+    创建训练过程的可视化图表，显示best fitness和accuracy moving average的变化趋势
+    
+    Args:
+        generations: 代数列表
+        best_fitness_history: 最佳适应度历史记录
+        accuracy_history: 准确率历史记录
+    """
+    # 计算准确率的移动平均值
+    def moving_average(data, window_size=10):
+        """计算移动平均值"""
+        if len(data) < window_size:
+            window_size = len(data)
+        
+        moving_avg = []
+        for i in range(len(data)):
+            start_idx = max(0, i - window_size + 1)
+            end_idx = i + 1
+            avg = np.mean(data[start_idx:end_idx])
+            moving_avg.append(avg)
+        return moving_avg
+ 
+    # 计算准确率的移动平均值（窗口大小为20）
+    accuracy_ma = moving_average(accuracy_history, window_size=20)
+    
+    # 设置图表样式
+    plt.style.use('default')
+    fig, ax1 = plt.subplots(figsize=(12, 8))
+    
+    # 设置中文字体
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'SimHei', 'Arial Unicode MS']
+    plt.rcParams['axes.unicode_minus'] = False
+    
+    # 绘制error曲线（左轴）
+    color1 = '#E74C3C'  # 现代红色
+    ax1.set_xlabel('Generation', fontsize=12)
+    ax1.set_ylabel('Error', color=color1, fontsize=12)
+    line1 = ax1.plot(generations, best_fitness_history, color=color1, linewidth=2.5, label='Error')
+    ax1.tick_params(axis='y', labelcolor=color1)
+    ax1.grid(True, alpha=0.3)
+    
+    # 创建右轴绘制accuracy moving average曲线
+    ax2 = ax1.twinx()
+    color2 = '#3498DB'  # 现代蓝色
+    ax2.set_ylabel('Accuracy (Moving Average)', color=color2, fontsize=12)
+    line2 = ax2.plot(generations, accuracy_ma, color=color2, linewidth=2.5, label='Accuracy (MA-20)')
+    ax2.tick_params(axis='y', labelcolor=color2)
+    
+    # 设置标题和图例
+    plt.title('ES-RNN Training Progress: Error and Accuracy Moving Average', fontsize=14, fontweight='bold')
+    
+    # 合并图例
+    lines = line1 + line2
+    labels = [l.get_label() for l in lines]
+    ax1.legend(lines, labels, loc='center right')
+    
+    # 调整布局
+    plt.tight_layout()
+    
+    # 保存图表
+    output_path = 'es_rnn_training_progress.png'
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    print(f"训练过程可视化图表已保存至: {output_path}")
+    
+    # 显示最终统计信息
+    final_fitness = best_fitness_history[-1]
+    final_accuracy = accuracy_history[-1]
+    final_accuracy_ma = accuracy_ma[-1]
+    max_fitness = max(best_fitness_history)
+    max_accuracy = max(accuracy_history)
+    max_accuracy_ma = max(accuracy_ma)
+    
+    print(f"\n训练统计:")
+    print(f"最终 Best Fitness: {final_fitness:.6f}")
+    print(f"最终 Accuracy: {final_accuracy:.4f}")
+    print(f"最终 Accuracy (MA-20): {final_accuracy_ma:.4f}")
+    print(f"最高 Best Fitness: {max_fitness:.6f}")
+    print(f"最高 Accuracy: {max_accuracy:.4f}")
+    print(f"最高 Accuracy (MA-20): {max_accuracy_ma:.4f}")
+    
+    plt.close()
+
 def train_step(state, batch_x, batch_y, generation=0):
     # 1. 采样噪声
     sampling(state.model)
@@ -157,16 +242,30 @@ def main():
     print(train_targets)
     print("\n开始ES训练...\n")
     
+    # 记录训练过程中的指标
+    generations = []
+    best_fitness_history = []
+    accuracy_history = []
+    
     for gen in range(1, config['generations'] + 1):
         avg_fitness, grads, outputs, fitness = train_step(state, train_data, train_targets, gen)
         
         # 使用JIT优化的指标计算
         best_idx, best_logits, accuracy = compute_metrics(outputs, train_targets, fitness)
         
+        # 记录数据用于可视化
+        generations.append(gen)
+        best_fitness_history.append(float(fitness[best_idx]))
+        accuracy_history.append(float(accuracy))
+        
         if gen % 10 == 0 or gen <= 5:
             print(f"Gen {gen:3d}: avg={avg_fitness:8.6f}, accuracy={accuracy:.4f}, best={fitness[best_idx]:.6f}")
         elif gen == config['generations']:
             print(f"Final Gen {gen}: avg={avg_fitness:8.6f}, accuracy={accuracy:.4f}, best={fitness[best_idx]:.6f}")
+    
+    # 创建可视化图表
+    print("\n生成训练过程可视化图表...")
+    create_training_visualization(generations, best_fitness_history, accuracy_history)
 
 if __name__ == "__main__":
     main()
