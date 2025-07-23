@@ -216,6 +216,7 @@ def main():
     parser.add_argument("--gpu", type=int, help="GPU ID")
     # Visualization parameter removed
     parser.add_argument("--seed", type=int, default=42, help="Seed")
+    parser.add_argument("--env", type=str, default="Navix-Dynamic-Obstacles-16x16-v0", help="Environment name")
 
     args = parser.parse_args()
     np.random.seed(args.seed)
@@ -236,7 +237,7 @@ def main():
 
     cfg = ESConfig(generations=args.gen, pop_size=args.pop, lr=args.lr, sigma=args.sigma)
     print("----- Config -----")
-    print(f"Env: Navix-Dynamic-Obstacles-16x16-v0")
+    print(f"Env: {args.env}")
     print(f"Hidden: {args.hidden}")
     print(f"Gens: {args.gen}")
     print(f"Pop: {args.pop}")
@@ -246,8 +247,8 @@ def main():
     print("------------------")
 
     from navix import transitions
-    env = nx.make('Navix-Dynamic-Obstacles-16x16-v0', observation_fn=nx.observations.symbolic,
-    # transitions_fn=transitions.deterministic_transition,
+    env = nx.make(args.env, observation_fn=nx.observations.symbolic,
+    transitions_fn=transitions.deterministic_transition,
     )
     numpy_seed = np.random.randint(0, 2**31)
     sample_key = jax.random.PRNGKey(numpy_seed)
