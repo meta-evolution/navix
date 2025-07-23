@@ -285,7 +285,7 @@ def main():
     
     # 用于保存每一代的直方图数据
     histogram_data = []
-    bins = 10  # 直方图区间数
+    bins = 30  # 直方图区间数
 
     for g in range(1, cfg.generations + 1):
         sampling(state.model)
