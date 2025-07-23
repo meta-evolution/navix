@@ -115,6 +115,38 @@ class ES_RNN(nnx.Module):
         """
         return self.forward_sequence(x)
     
+    def forward_step(self, x: jnp.ndarray, hidden: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        """Process a single time step for RL environments.
+        
+        Args:
+            x: Input tensor of shape [batch_size, input_size]
+            hidden: Hidden state tensor of shape [batch_size, hidden_size]
+        
+        Returns:
+            output: Output tensor of shape [batch_size, output_size]
+            new_hidden: New hidden state tensor of shape [batch_size, hidden_size]
+        """
+        # RNN cell computation
+        i2h_out = self.i2h(x)
+        h2h_out = self.h2h(hidden)
+        new_hidden = jax.nn.tanh(i2h_out + h2h_out)
+        
+        # Output computation
+        output = self.h2o(new_hidden)
+        
+        return output, new_hidden
+    
+    def init_hidden(self, batch_size: int) -> jnp.ndarray:
+        """Initialize hidden state with zeros.
+        
+        Args:
+            batch_size: Batch size
+        
+        Returns:
+            Initial hidden state tensor of shape [batch_size, hidden_size]
+        """
+        return jnp.zeros((batch_size, self.hidden_size))
+    
     def forward_sequence(self, sequence: jnp.ndarray) -> jnp.ndarray:
         """Process an entire sequence (JIT-optimized).
         

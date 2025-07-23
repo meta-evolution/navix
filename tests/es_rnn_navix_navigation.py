@@ -36,12 +36,25 @@ try:
 except ImportError:
     import neurogenesistape as ngt
 
-from ngt import (
-    ES_MLP, ES_Optimizer, ESConfig,
-    sampling, populated_noise_fwd, calculate_gradients, centered_rank
-)
+from neurogenesistape.modules.es.nn import ES_RNN
+from neurogenesistape.modules.es.optimizer import ES_Optimizer
+from neurogenesistape.modules.es.training import ESConfig
+from neurogenesistape.modules.evolution import sampling, calculate_gradients, centered_rank
+from neurogenesistape.modules.variables import Populated_Variable, Grad_variable
 
-# Use NGT's ES_MLP directly for agent
+# Define state_axes and populated_noise_fwd function for RNN with hidden state
+others = (nnx.RngCount, nnx.RngKey)
+state_axes = nnx.StateAxes({nnx.Param: None, Populated_Variable: 0, Grad_variable: None, nnx.Variable: None, others: None})
+
+@nnx.vmap(in_axes=(state_axes, None))
+def populated_noise_fwd(model: nnx.Module, input):
+    # Reshape single-step input to sequence format: (batch_size, 1, input_size)
+    input_seq = jnp.expand_dims(input, axis=1)
+    output_seq = model(input_seq)
+    # Return only the output for the single timestep: (batch_size, output_size)
+    return output_seq[:, 0, :]
+
+# Use NGT's ES_RNN directly for agent
 def initialize_batch_environments(env, popsize, base_key):
     """Initialize batch of environments in parallel."""
     env_keys = jax.random.split(base_key, popsize)
@@ -49,11 +62,11 @@ def initialize_batch_environments(env, popsize, base_key):
 
 def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, generation=None, seed=42):
     """Evaluate population fitness in batch."""
-    pop_size = agent.layers[0].kernel.popsize
+    pop_size = agent.i2h.kernel.popsize
     step_counts = jnp.zeros(pop_size, dtype=jnp.int32)
     done_flags = jnp.zeros(pop_size, dtype=jnp.bool_)
     current_timesteps = batch_timesteps
-
+    
     @jax.jit
     def preprocess_single(timestep):
         obs = timestep.observation.flatten()
@@ -67,21 +80,7 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
         goals_reached = jax.vmap(lambda ts: ts.state.events.goal_reached.happened)(next_timesteps)
         return next_timesteps, goals_reached
 
-    sample_obs = jax.vmap(preprocess_single)(current_timesteps)
-    _ = populated_noise_fwd(agent, sample_obs)
-
-    viz_env_id = None
-    viz_dir = None
-    viz_timestep = None
-    if generation is not None:
-        viz_dir = Path("results") / f"visualization_gen_{generation}"
-        viz_dir.mkdir(parents=True, exist_ok=True)
-        temp_state = np.random.get_state()
-        np.random.seed(seed)
-        viz_env_id = np.random.randint(0, pop_size)
-        np.random.set_state(temp_state)
-        print(f"Visualizing env {viz_env_id} for gen {generation}")
-        viz_timestep = jax.tree.map(lambda x: x[viz_env_id], batch_timesteps)
+    # Visualization removed for performance
 
     for step in range(max_steps):
         if step % 50 == 0 or step == max_steps - 1:
@@ -99,31 +98,17 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
         # 正常的基于MLP网络输出的概率采样
         action_probs = jax.nn.softmax(member_logits, axis=-1)
         action_keys = jax.random.split(jax.random.PRNGKey(step + (generation * 1000 if generation else 0)), pop_size)
-        actions = jax.vmap(jax.random.categorical)(action_keys, jnp.log(action_probs))
+        actions = jax.vmap(lambda key, logits: jax.random.categorical(key, logits))(action_keys, member_logits)
 
-        if viz_env_id is not None:
-            pos = current_timesteps.state.entities['player'].position[viz_env_id].squeeze()
-            dir_ = current_timesteps.state.entities['player'].direction[viz_env_id].squeeze()
-            act = actions[viz_env_id]
-            print(f"\n[Step {step+1}] Env {viz_env_id}: Pos=({pos[0]},{pos[1]}), Dir={dir_}, Action={act}, Probs={action_probs[viz_env_id]}")
-            print(f"Forward prob: {action_probs[viz_env_id][2]:.1%}, Model: {action_probs[viz_env_id][2]:.4%}")
-
-            if not done_flags[viz_env_id]:
-                rgb = nx.observations.rgb(viz_timestep.state)
-                img_path = viz_dir / f"step_{step + 1:03d}.png"
-                plt.figure(figsize=(8, 8))
-                plt.imshow(rgb)
-                plt.axis('off')
-                plt.title(f"Gen {generation}, Step {step + 1}, Env #{viz_env_id}")
-                plt.savefig(img_path, bbox_inches='tight', dpi=100)
-                plt.close()
-                viz_timestep = env.step(viz_timestep, actions[viz_env_id])
+        # Visualization code removed
 
         next_timesteps, goals_reached = step_batch(current_timesteps, actions)
         next_timesteps = jax.vmap(lambda o, n, d: jax.tree.map(lambda old, new: jnp.where(d, old, new), o, n))(current_timesteps, next_timesteps, done_flags)
 
+        # 更新step_counts：如果agent刚刚到达目标，记录步数
+        newly_done = goals_reached & ~done_flags
+        step_counts = jnp.where(newly_done, step + 1, step_counts)
         done_flags = done_flags | goals_reached
-        step_counts = jnp.where(~done_flags & goals_reached, step + 1, step_counts)
         current_timesteps = next_timesteps
 
         if jnp.all(done_flags):
@@ -139,7 +124,7 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
 
 def train_step_navix(env, state, max_steps=500, generation=None, seed=42):
     """Perform single ES training step."""
-    popsize = state.model.layers[0].kernel.popsize
+    popsize = state.model.i2h.kernel.popsize
 
     if generation is None:
         numpy_seed = np.random.randint(0, 2**31)
@@ -153,10 +138,12 @@ def train_step_navix(env, state, max_steps=500, generation=None, seed=42):
     batch_timesteps = initialize_batch_environments(env, popsize, base_key)
 
     fitness_scores = evaluate_population_fitness(env, state.model, batch_timesteps, max_steps, generation, seed)
+    
     fitness_ranked = centered_rank(fitness_scores)
+    
     grads = calculate_gradients(state.model, fitness_ranked)
     state.update(grads)
-    return jnp.mean(fitness_scores)
+    return jnp.mean(fitness_scores), jnp.max(fitness_scores)
 
 
 # Simplified ES using NGT components
@@ -173,7 +160,7 @@ def main():
     parser.add_argument("--max_steps", type=int, default=500, help="Max steps")
     parser.add_argument("--test", action='store_true', help="Test mode")
     parser.add_argument("--gpu", type=int, help="GPU ID")
-    parser.add_argument("--visualize", action='store_true', help="Visualize")
+    # Visualization parameter removed
     parser.add_argument("--seed", type=int, default=42, help="Seed")
 
     args = parser.parse_args()
@@ -210,17 +197,15 @@ def main():
     sample_key = jax.random.PRNGKey(numpy_seed)
     sample_timestep = env.reset(sample_key)
 
-    if args.visualize:
-        print("Visualization enabled")
+    # Visualization check removed
 
     total_obs_size = sample_timestep.observation.size + 2 + 1
     action_size = env.action_space.maximum.item() + 1
     print(f"Obs size: {total_obs_size}, Actions: {action_size}")
 
-    layer_sizes = [total_obs_size, args.hidden, args.hidden, action_size]
     numpy_seed = np.random.randint(0, 2**31)
     rngs = nnx.Rngs(numpy_seed)
-    agent = ES_MLP(layer_sizes, rngs)
+    agent = ES_RNN(total_obs_size, args.hidden, action_size, rngs)
     agent.set_attributes(popsize=cfg.pop_size, noise_sigma=cfg.sigma)
 
     tx = optax.chain(optax.scale(-1), optax.sgd(cfg.lr))
@@ -236,10 +221,10 @@ def main():
 
     for g in range(1, cfg.generations + 1):
         sampling(state.model)
-        avg_fitness = train_step_navix(env, state, args.max_steps, g if args.visualize else None, args.seed)
+        avg_fitness, current_best_fitness = train_step_navix(env, state, args.max_steps, None, args.seed)
 
-        if avg_fitness > best_fitness:
-            best_fitness = avg_fitness
+        # 记录当前种群中的最佳个体适应度
+        best_fitness = current_best_fitness
 
         print(f"[Gen {g:4d}] avg={avg_fitness:8.4f} best={best_fitness:8.4f}")
 
@@ -253,26 +238,8 @@ def main():
     results_dir = Path("results")
     results_dir.mkdir(exist_ok=True)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-    ax1.plot(generations, fitnesses, 'b-', label='Avg Fitness')
-    ax1.set_xlabel('Gen')
-    ax1.set_ylabel('Fitness')
-    ax1.set_title('Avg Fitness')
-    ax1.grid(True, alpha=0.3)
-    ax1.legend()
-
-    ax2.plot(generations, best_fitnesses, 'r--', label='Best Fitness')
-    ax2.set_xlabel('Gen')
-    ax2.set_ylabel('Fitness')
-    ax2.set_title('Best Fitness')
-    ax2.grid(True, alpha=0.3)
-    ax2.legend()
-
-    plt.tight_layout()
-    mode = "test" if args.test else "train"
-    filename = f"es_navix_h{args.hidden}_g{args.gen}_p{args.pop}_results.png"
-    plt.savefig(results_dir / filename, dpi=300, bbox_inches='tight')
-    print(f"Plot saved: {filename}")
+    # Plot generation removed - keeping only data saving
+    print(f"Training completed - no plot generated")
 
     data_filename = f"es_navix_h{args.hidden}_g{args.gen}_p{args.pop}_data.txt"
     with open(results_dir / data_filename, 'w') as f:
@@ -283,7 +250,6 @@ def main():
         for i in range(len(generations)):
             f.write(f"{generations[i]}\t{fitnesses[i]:.6f}\t{best_fitnesses[i]:.6f}\n")
     print(f"Data saved: {data_filename}")
-    plt.show()
 
 
 if __name__ == '__main__':

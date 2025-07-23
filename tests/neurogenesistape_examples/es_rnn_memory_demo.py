@@ -142,11 +142,12 @@ def create_training_visualization(generations, best_fitness_history, accuracy_hi
     plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'SimHei', 'Arial Unicode MS']
     plt.rcParams['axes.unicode_minus'] = False
     
-    # 绘制error曲线（左轴）
+    # 绘制error曲线（左轴）- 将fitness乘以-1转换为error
+    error_history = [-fitness for fitness in best_fitness_history]
     color1 = '#E74C3C'  # 现代红色
     ax1.set_xlabel('Generation', fontsize=12)
     ax1.set_ylabel('Error', color=color1, fontsize=12)
-    line1 = ax1.plot(generations, best_fitness_history, color=color1, linewidth=2.5, label='Error')
+    line1 = ax1.plot(generations, error_history, color=color1, linewidth=2.5, label='Error')
     ax1.tick_params(axis='y', labelcolor=color1)
     ax1.grid(True, alpha=0.3)
     
@@ -182,10 +183,10 @@ def create_training_visualization(generations, best_fitness_history, accuracy_hi
     max_accuracy_ma = max(accuracy_ma)
     
     print(f"\n训练统计:")
-    print(f"最终 Best Fitness: {final_fitness:.6f}")
+    print(f"最终 Error: {-final_fitness:.6f}")
     print(f"最终 Accuracy: {final_accuracy:.4f}")
     print(f"最终 Accuracy (MA-20): {final_accuracy_ma:.4f}")
-    print(f"最高 Best Fitness: {max_fitness:.6f}")
+    print(f"最低 Error: {-max_fitness:.6f}")
     print(f"最高 Accuracy: {max_accuracy:.4f}")
     print(f"最高 Accuracy (MA-20): {max_accuracy_ma:.4f}")
     
@@ -217,7 +218,7 @@ def main():
     # 极端测试配置：更大的种群和更多代数
     config = {
         'input_size': 1, 'hidden_size': 256, 'output_size': 4,
-        'popsize': 2000, 'generations': 5000, 'learning_rate': 0.05, 'sigma': 0.04
+        'popsize': 2000, 'generations': 500, 'learning_rate': 0.05, 'sigma': 0.04
     }
     
     print(f"开始极端规模测试: 种群大小={config['popsize']}, 代数={config['generations']}, 隐藏层大小={config['hidden_size']}")
