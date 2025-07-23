@@ -138,6 +138,43 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
     return -path_lengths
 
 
+def plot_fitness_histogram(fitness_scores, generation, bins=10):
+    """绘制fitness分布的命令行直方图"""
+    fitness_array = np.array(fitness_scores)
+    min_val, max_val = fitness_array.min(), fitness_array.max()
+    total_count = len(fitness_array)
+    
+    if min_val == max_val:
+        print(f"[Gen {generation}] Fitness Histogram: All values = {min_val:.2f}")
+        return
+    
+    # 计算直方图
+    hist, bin_edges = np.histogram(fitness_array, bins=bins, range=(min_val, max_val))
+    max_count = hist.max()
+    
+    print(f"[Gen {generation}] Fitness Histogram (range: {min_val:.2f} to {max_val:.2f}):")
+    
+    # 绘制直方图
+    bar_width = 40  # 最大条形宽度
+    for i in range(bins):
+        left_edge = bin_edges[i]
+        right_edge = bin_edges[i + 1]
+        count = hist[i]
+        percentage = (count / total_count) * 100 if total_count > 0 else 0
+        
+        # 计算条形长度
+        if max_count > 0:
+            bar_length = int((count / max_count) * bar_width)
+        else:
+            bar_length = 0
+        
+        # 绘制条形（使用固定宽度格式对齐）
+        bar = '█' * bar_length + '░' * (bar_width - bar_length)
+        print(f"  [{left_edge:7.2f}-{right_edge:7.2f}] {bar} {percentage:5.1f}%")
+    
+    print()
+
+
 def train_step_navix(env, state, max_steps=500, generation=None, seed=42):
     """Perform single ES training step."""
     popsize = state.model.i2h.kernel.popsize
@@ -162,7 +199,7 @@ def train_step_navix(env, state, max_steps=500, generation=None, seed=42):
 
     state.update(grads)
     
-    return jnp.mean(fitness_scores), jnp.max(fitness_scores)
+    return jnp.mean(fitness_scores), jnp.max(fitness_scores), fitness_scores
 
 
 # Simplified ES using NGT components
@@ -238,12 +275,15 @@ def main():
 
     for g in range(1, cfg.generations + 1):
         sampling(state.model)
-        avg_fitness, current_best_fitness = train_step_navix(env, state, args.max_steps, g, args.seed)
+        avg_fitness, current_best_fitness, fitness_scores = train_step_navix(env, state, args.max_steps, g, args.seed)
 
         # 记录当前种群中的最佳个体适应度
         best_fitness = current_best_fitness
 
         print(f"[Gen {g:4d}] avg={avg_fitness:8.4f} best={best_fitness:8.4f}")
+        
+        # 绘制当前代的fitness分布直方图
+        plot_fitness_histogram(fitness_scores, g)
 
         generations.append(g)
         fitnesses.append(float(avg_fitness))
