@@ -216,7 +216,7 @@ def main():
     parser.add_argument("--gpu", type=int, help="GPU ID")
     # Visualization parameter removed
     parser.add_argument("--seed", type=int, default=42, help="Seed")
-    parser.add_argument("--env", type=str, default="Navix-Dynamic-Obstacles-16x16-v0", help="Environment name")
+    parser.add_argument("--env", type=str, default="Navix-Empty-Random-6x6-v0", help="Environment name")
 
     args = parser.parse_args()
     np.random.seed(args.seed)
