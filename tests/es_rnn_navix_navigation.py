@@ -139,17 +139,21 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
 
 
 def plot_fitness_histogram(fitness_scores, generation, bins=10):
-    """绘制fitness分布的命令行直方图"""
+    """绘制fitness分布的命令行直方图并返回直方图数据"""
     fitness_array = np.array(fitness_scores)
     min_val, max_val = fitness_array.min(), fitness_array.max()
     total_count = len(fitness_array)
     
-    # if min_val == max_val:
-    #     print(f"[Gen {generation}] Fitness Histogram: All values = {min_val:.2f}")
-    #     return
+    # 强制计算直方图，即使所有值相同
+    if min_val == max_val:
+        # 当所有值相同时，创建一个单一区间的直方图
+        hist = np.array([total_count] + [0] * (bins - 1))
+        bin_edges = np.linspace(min_val - 0.1, max_val + 0.1, bins + 1)
+        print(f"[Gen {generation}] Fitness Histogram: All values = {min_val:.2f}")
+    else:
+        # 计算直方图
+        hist, bin_edges = np.histogram(fitness_array, bins=bins, range=(min_val, max_val))
     
-    # 计算直方图
-    hist, bin_edges = np.histogram(fitness_array, bins=bins, range=(min_val, max_val))
     max_count = hist.max()
     
     print(f"[Gen {generation}] Fitness Histogram (range: {min_val:.2f} to {max_val:.2f}):")
@@ -173,6 +177,9 @@ def plot_fitness_histogram(fitness_scores, generation, bins=10):
         print(f"  [{left_edge:7.2f}-{right_edge:7.2f}] {bar} {percentage:5.1f}% ({count})")
     
     print()
+    
+    # 返回直方图数据：(hist, bin_edges, min_val, max_val)
+    return hist, bin_edges, min_val, max_val
 
 
 def train_step_navix(env, state, max_steps=500, generation=None, seed=42):
@@ -275,6 +282,10 @@ def main():
     generations = []
     fitnesses = []
     best_fitnesses = []
+    
+    # 用于保存每一代的直方图数据
+    histogram_data = []
+    bins = 10  # 直方图区间数
 
     for g in range(1, cfg.generations + 1):
         sampling(state.model)
@@ -285,8 +296,18 @@ def main():
 
         print(f"[Gen {g:4d}] avg={avg_fitness:8.4f} best={best_fitness:8.4f}")
         
-        # 绘制当前代的fitness分布直方图
-        plot_fitness_histogram(fitness_scores, g)
+        # 绘制当前代的fitness分布直方图并收集数据
+        hist, bin_edges, min_val, max_val = plot_fitness_histogram(fitness_scores, g, bins)
+        
+        # 保存直方图数据
+        histogram_data.append({
+            'generation': g,
+            'hist': hist,
+            'bin_edges': bin_edges,
+            'min_val': min_val,
+            'max_val': max_val,
+            'fitness_scores': np.array(fitness_scores)
+        })
 
         generations.append(g)
         fitnesses.append(float(avg_fitness))
@@ -310,6 +331,22 @@ def main():
         for i in range(len(generations)):
             f.write(f"{generations[i]}\t{fitnesses[i]:.6f}\t{best_fitnesses[i]:.6f}\n")
     print(f"Data saved: {data_filename}")
+    
+    # 保存直方图数据到results文件夹
+    # 创建包含所有直方图数据的numpy数组
+    histogram_tensor = np.array([data['hist'] for data in histogram_data])
+    
+    # 保存直方图张量和相关元数据
+    histogram_file = results_dir / f"fitness_histograms_{args.env.replace('-', '_')}_{args.gen}gen_{args.pop}pop.npz"
+    np.savez(histogram_file, 
+             histogram_tensor=histogram_tensor,
+             generations=[data['generation'] for data in histogram_data],
+             bin_edges=[data['bin_edges'] for data in histogram_data],
+             min_vals=[data['min_val'] for data in histogram_data],
+             max_vals=[data['max_val'] for data in histogram_data],
+             all_fitness_scores=[data['fitness_scores'] for data in histogram_data])
+    
+    print(f"Fitness histograms saved to: {histogram_file}")
 
 
 if __name__ == '__main__':
