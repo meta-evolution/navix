@@ -144,9 +144,9 @@ def plot_fitness_histogram(fitness_scores, generation, bins=10):
     min_val, max_val = fitness_array.min(), fitness_array.max()
     total_count = len(fitness_array)
     
-    if min_val == max_val:
-        print(f"[Gen {generation}] Fitness Histogram: All values = {min_val:.2f}")
-        return
+    # if min_val == max_val:
+    #     print(f"[Gen {generation}] Fitness Histogram: All values = {min_val:.2f}")
+    #     return
     
     # 计算直方图
     hist, bin_edges = np.histogram(fitness_array, bins=bins, range=(min_val, max_val))
