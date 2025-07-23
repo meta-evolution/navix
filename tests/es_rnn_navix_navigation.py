@@ -42,9 +42,14 @@ from neurogenesistape.modules.es.training import ESConfig
 from neurogenesistape.modules.evolution import sampling, calculate_gradients, centered_rank
 from neurogenesistape.modules.variables import Populated_Variable, Grad_variable
 
-# Define state_axes and populated_noise_fwd function for RNN with hidden state
+# Define state_axes and populated_noise_fwd functions for RNN with hidden state
 others = (nnx.RngCount, nnx.RngKey)
 state_axes = nnx.StateAxes({nnx.Param: None, Populated_Variable: 0, Grad_variable: None, nnx.Variable: None, others: None})
+
+@nnx.vmap(in_axes=(state_axes, 0, 0))
+def populated_noise_fwd_step(model: nnx.Module, input, hidden):
+    """Single-step forward pass for RNN with hidden state maintenance."""
+    return model.forward_step(input, hidden)
 
 @nnx.vmap(in_axes=(state_axes, None))
 def populated_noise_fwd(model: nnx.Module, input):
@@ -61,11 +66,15 @@ def initialize_batch_environments(env, popsize, base_key):
     return jax.vmap(env.reset)(env_keys)
 
 def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, generation=None, seed=42):
-    """Evaluate population fitness in batch."""
+    """Evaluate population fitness in batch with proper RNN hidden state maintenance."""
     pop_size = agent.i2h.kernel.popsize
     step_counts = jnp.zeros(pop_size, dtype=jnp.int32)
     done_flags = jnp.zeros(pop_size, dtype=jnp.bool_)
     current_timesteps = batch_timesteps
+    
+    # Initialize hidden states for all population members
+    # Shape: (pop_size, batch_size, hidden_size)
+    hidden_states = agent.init_hidden(pop_size)
     
     @jax.jit
     def preprocess_single(timestep):
@@ -87,15 +96,22 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
             print(f"\rStep {step + 1}/{max_steps}", end="", flush=True)
 
         batch_obs = jax.vmap(preprocess_single)(current_timesteps)
-        logits = populated_noise_fwd(agent, batch_obs)
-        member_logits = jnp.diagonal(logits, axis1=0, axis2=1).T
+        
+        # Use single-step RNN forward pass with hidden state maintenance
+        logits, new_hidden_states = populated_noise_fwd_step(agent, batch_obs, hidden_states)
+        
+        # Update hidden states only for agents that are still active (not done)
+        hidden_states = jnp.where(done_flags[:, None], hidden_states, new_hidden_states)
+        
+        # logits shape is (pop_size, action_size) - direct output from RNN
+        member_logits = logits
 
         # 测试代码（已注释）
         # other_prob = 0.1 / 6
         # forced_probs = jnp.full_like(member_logits, other_prob)
         # forced_probs = forced_probs.at[:, 2].set(0.9)
         
-        # 正常的基于MLP网络输出的概率采样
+        # 正常的基于RNN网络输出的概率采样
         action_probs = jax.nn.softmax(member_logits, axis=-1)
         action_keys = jax.random.split(jax.random.PRNGKey(step + (generation * 1000 if generation else 0)), pop_size)
         actions = jax.vmap(lambda key, logits: jax.random.categorical(key, logits))(action_keys, member_logits)
@@ -142,21 +158,22 @@ def train_step_navix(env, state, max_steps=500, generation=None, seed=42):
     fitness_ranked = centered_rank(fitness_scores)
     
     grads = calculate_gradients(state.model, fitness_ranked)
+    
+
     state.update(grads)
+    
     return jnp.mean(fitness_scores), jnp.max(fitness_scores)
 
 
 # Simplified ES using NGT components
-
-
 def main():
     """Main ES training function."""
     parser = argparse.ArgumentParser(description='ES Navix Navigation with NGT')
     parser.add_argument("--hidden", type=int, default=128, help="Hidden size")
     parser.add_argument("--gen", type=int, default=100, help="Generations")
     parser.add_argument("--pop", type=int, default=200, help="Population size (even)")
-    parser.add_argument("--lr", type=float, default=0.01, help="Learning rate")
-    parser.add_argument("--sigma", type=float, default=0.1, help="Noise std")
+    parser.add_argument("--lr", type=float, default=0.05, help="Learning rate")
+    parser.add_argument("--sigma", type=float, default=0.05, help="Noise std")
     parser.add_argument("--max_steps", type=int, default=500, help="Max steps")
     parser.add_argument("--test", action='store_true', help="Test mode")
     parser.add_argument("--gpu", type=int, help="GPU ID")
@@ -182,7 +199,7 @@ def main():
 
     cfg = ESConfig(generations=args.gen, pop_size=args.pop, lr=args.lr, sigma=args.sigma)
     print("----- Config -----")
-    print(f"Env: Navix-Dynamic-Obstacles-16x16-v0")
+    print(f"Env: Navix-Dynamic-Obstacles-6x6-Random-v0")
     print(f"Hidden: {args.hidden}")
     print(f"Gens: {args.gen}")
     print(f"Pop: {args.pop}")
@@ -192,7 +209,7 @@ def main():
     print("------------------")
 
     from navix import transitions
-    env = nx.make('Navix-Dynamic-Obstacles-16x16-v0', observation_fn=nx.observations.symbolic, transitions_fn=transitions.deterministic_transition)
+    env = nx.make('Navix-Dynamic-Obstacles-6x6-Random-v0', observation_fn=nx.observations.symbolic, transitions_fn=transitions.deterministic_transition)
     numpy_seed = np.random.randint(0, 2**31)
     sample_key = jax.random.PRNGKey(numpy_seed)
     sample_timestep = env.reset(sample_key)
@@ -221,7 +238,7 @@ def main():
 
     for g in range(1, cfg.generations + 1):
         sampling(state.model)
-        avg_fitness, current_best_fitness = train_step_navix(env, state, args.max_steps, None, args.seed)
+        avg_fitness, current_best_fitness = train_step_navix(env, state, args.max_steps, g, args.seed)
 
         # 记录当前种群中的最佳个体适应度
         best_fitness = current_best_fitness
