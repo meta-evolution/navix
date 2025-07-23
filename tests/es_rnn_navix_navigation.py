@@ -170,7 +170,7 @@ def plot_fitness_histogram(fitness_scores, generation, bins=10):
         
         # 绘制条形（使用固定宽度格式对齐）
         bar = '█' * bar_length + '░' * (bar_width - bar_length)
-        print(f"  [{left_edge:7.2f}-{right_edge:7.2f}] {bar} {percentage:5.1f}%")
+        print(f"  [{left_edge:7.2f}-{right_edge:7.2f}] {bar} {percentage:5.1f}% ({count})")
     
     print()
 
@@ -236,7 +236,7 @@ def main():
 
     cfg = ESConfig(generations=args.gen, pop_size=args.pop, lr=args.lr, sigma=args.sigma)
     print("----- Config -----")
-    print(f"Env: Navix-Dynamic-Obstacles-6x6-Random-v0")
+    print(f"Env: Navix-Dynamic-Obstacles-16x16-v0")
     print(f"Hidden: {args.hidden}")
     print(f"Gens: {args.gen}")
     print(f"Pop: {args.pop}")
@@ -246,7 +246,9 @@ def main():
     print("------------------")
 
     from navix import transitions
-    env = nx.make('Navix-Dynamic-Obstacles-6x6-Random-v0', observation_fn=nx.observations.symbolic, transitions_fn=transitions.deterministic_transition)
+    env = nx.make('Navix-Dynamic-Obstacles-16x16-v0', observation_fn=nx.observations.symbolic,
+    # transitions_fn=transitions.deterministic_transition,
+    )
     numpy_seed = np.random.randint(0, 2**31)
     sample_key = jax.random.PRNGKey(numpy_seed)
     sample_timestep = env.reset(sample_key)
