@@ -3,6 +3,10 @@
 import argparse
 import sys
 import os
+from pathlib import Path
+
+# Add the tests directory to Python path to use local neurogenesistape instead of pip-installed version
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
 # GPU设备配置（必须在JAX导入前）
 def setup_gpu_from_args():
@@ -23,15 +27,10 @@ setup_gpu_from_args()
 
 import jax
 import matplotlib.pyplot as plt
-from pathlib import Path
 import numpy as np
 
-# Try to import using the ngt alias, fall back to neurogenesistape if needed
-try:
-    import ngt
-except ImportError:
-    print("Warning: Could not import ngt directly, using neurogenesistape instead")
-    import neurogenesistape as ngt
+# Import neurogenesistape from local tests directory as ngt
+import neurogenesistape as ngt
 
 # Import components
 from ngt import (
