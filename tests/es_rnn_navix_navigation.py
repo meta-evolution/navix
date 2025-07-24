@@ -44,7 +44,7 @@ from neurogenesistape.modules.variables import Populated_Variable, Grad_variable
 
 # Define state_axes and populated_noise_fwd functions for RNN with hidden state
 others = (nnx.RngCount, nnx.RngKey)
-state_axes = nnx.StateAxes({nnx.Param: None, Populated_Variable: 0, Grad_variable: None, nnx.Variable: None, others: None})
+state_axes = nnx.StateAxes({nnx.Param: None, Populated_Variable: 0, Grad_variable: None, nnx.Variable: None, others: None, ...: None})
 
 @nnx.vmap(in_axes=(state_axes, 0, 0))
 def populated_noise_fwd_step(model: nnx.Module, input, hidden):
