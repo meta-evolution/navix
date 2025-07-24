@@ -55,7 +55,7 @@ def plot_fitness_histogram(fitness_scores, generation, bins=20):
     total_count = len(fitness_array)
     
     # 使用固定范围[-7, 0]来保持直方图的一致性
-    min_val = -7.0
+    min_val = -6.0
     max_val = 0.0
     
     # 计算直方图（使用固定范围）
@@ -150,7 +150,7 @@ def main():
     
     # 用于保存每一代的直方图数据
     histogram_data = []
-    bins = 20  # 直方图区间数
+    bins = 30  # 直方图区间数
     
     for g in range(1, cfg.generations + 1):
         # Create batch
