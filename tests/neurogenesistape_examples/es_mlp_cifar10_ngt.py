@@ -55,7 +55,7 @@ def plot_fitness_histogram(fitness_scores, generation, bins=20):
     total_count = len(fitness_array)
     
     # 使用固定范围[-7, 0]来保持直方图的一致性
-    min_val = -6.0
+    min_val = -20.0
     max_val = 0.0
     
     # 计算直方图（使用固定范围）
@@ -131,6 +131,9 @@ def main():
     model = ES_MLP(layer_sizes, rngs)
     model.set_attributes(popsize=cfg.pop_size, noise_sigma=cfg.sigma)
     
+    # Enable sigma decay for all ES modules
+    model.enable_sigma_decay(True)
+    
     # Initialize optimizer
     import optax
     tx = optax.chain(optax.scale(-1), optax.sgd(cfg.lr))
@@ -150,18 +153,22 @@ def main():
     
     # 用于保存每一代的直方图数据
     histogram_data = []
-    bins = 30  # 直方图区间数
+    bins = 60  # 直方图区间数
     
     for g in range(1, cfg.generations + 1):
-        # 在训练后期（90%进度时）将sigma增大一倍
-        if g == int(cfg.generations * 0.9):
-            # 将所有层的sigma值增大一倍
-            for layer in model.layers:
-                if hasattr(layer, 'kernel') and hasattr(layer.kernel, 'noise_sigma'):
-                    layer.kernel.noise_sigma *= 2.0
-                if hasattr(layer, 'bias') and hasattr(layer.bias, 'noise_sigma'):
-                    layer.bias.noise_sigma *= 2.0
-            print(f"[Gen {g:4d}] *** SIGMA BOOST: Increased sigma by 2x at 90% progress ***")
+
+        # 打印当前代的sigma值（从ES模块中提取）
+        current_sigma = model.layers[0].kernel.noise_sigma  # 从第一层的ES_Tape中获取sigma值
+
+        # # 在训练后期（90%进度时）将sigma增大一倍
+        # if current_sigma < 0.05:
+        #     # 将所有层的sigma值增大
+        #     for layer in model.layers:
+        #         if hasattr(layer, 'kernel') and hasattr(layer.kernel, 'noise_sigma'):
+        #             layer.kernel.noise_sigma = args.sigma
+        #         if hasattr(layer, 'bias') and hasattr(layer.bias, 'noise_sigma'):
+        #             layer.bias.noise_sigma = args.sigma
+        #     print(f"[Gen {g:4d}] *** SIGMA BOOST: Increased sigma by 2x at 90% progress ***")
         
         # 打印当前代的sigma值（从ES模块中提取）
         current_sigma = model.layers[0].kernel.noise_sigma  # 从第一层的ES_Tape中获取sigma值

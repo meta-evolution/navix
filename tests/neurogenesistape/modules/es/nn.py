@@ -70,6 +70,18 @@ class ES_MLP(nnx.Module):
         for i in range(len(layer_sizes) - 1):
             self.layers.append(ES_Linear(layer_sizes[i], layer_sizes[i + 1], rngs))
     
+    def enable_sigma_decay(self, enabled: bool = True):
+        """Enable or disable sigma decay for all ES modules in the network.
+        
+        Args:
+            enabled: Whether to enable sigma decay (default: True)
+        """
+        for layer in self.layers:
+            if hasattr(layer, 'kernel'):
+                layer.kernel.set_sigma_decay(enabled)
+            if hasattr(layer, 'bias'):
+                layer.bias.set_sigma_decay(enabled)
+    
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         """Forward pass through the MLP.
         

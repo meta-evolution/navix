@@ -13,6 +13,15 @@ class ES_Module(EvoModule):
     """Base class for Evolution Strategies modules."""
 
     noise_sigma: float = 0.1
+    enable_sigma_decay: bool = False
+    
+    def set_sigma_decay(self, enabled: bool = True):
+        """Set sigma decay for this ES module.
+        
+        Args:
+            enabled: Whether to enable sigma decay (default: True)
+        """
+        self.enable_sigma_decay = enabled
 
 
 class ES_Tape(ES_Module):
@@ -58,6 +67,12 @@ class ES_Tape(ES_Module):
     
     def sampling(self):
         """Generate symmetric noise for the parameter tensor."""
+        # Apply sigma decay if enabled
+        self.noise_sigma = jnp.where(
+            self.enable_sigma_decay,
+            jnp.maximum(jnp.multiply(self.noise_sigma, 0.999), 0.01),
+            self.noise_sigma
+        )
         # Generate symmetric noise (half positive, half negative)
         kernel_key = self.rngs.params()
         half = self.popsize // 2
