@@ -54,25 +54,20 @@ def plot_fitness_histogram(fitness_scores, generation, bins=20):
     fitness_array = np.array(fitness_scores)
     total_count = len(fitness_array)
     
-    # 计算范围
-    min_val = float(fitness_array.min())
-    max_val = float(fitness_array.max())
+    # 使用固定范围[-7, 0]来保持直方图的一致性
+    min_val = -7.0
+    max_val = 0.0
     
-    # 如果所有值相同，强制计算直方图
-    if min_val == max_val:
-        # 创建一个小的范围来强制计算直方图
-        range_val = max(abs(min_val) * 0.01, 1e-6)
-        min_val -= range_val
-        max_val += range_val
-        # 计算直方图
-        hist, bin_edges = np.histogram(fitness_array, bins=bins, range=(min_val, max_val))
-    else:
-        # 计算直方图
-        hist, bin_edges = np.histogram(fitness_array, bins=bins, range=(min_val, max_val))
+    # 计算直方图（使用固定范围）
+    hist, bin_edges = np.histogram(fitness_array, bins=bins, range=(min_val, max_val))
+    
+    # 获取实际数据的最小值和最大值用于显示
+    actual_min = float(fitness_array.min())
+    actual_max = float(fitness_array.max())
     
     max_count = hist.max()
     
-    print(f"[Gen {generation}] Fitness Histogram (range: {min_val:.2f} to {max_val:.2f}):")
+    print(f"[Gen {generation}] Fitness Histogram (fixed range: {min_val:.2f} to {max_val:.2f}, actual: {actual_min:.2f} to {actual_max:.2f}):")
     
     # 绘制直方图
     bar_width = 40  # 最大条形宽度
@@ -94,8 +89,8 @@ def plot_fitness_histogram(fitness_scores, generation, bins=20):
     
     print()
     
-    # 返回直方图数据：(hist, bin_edges, min_val, max_val)
-    return hist, bin_edges, min_val, max_val
+    # 返回直方图数据：(hist, bin_edges, actual_min, actual_max)
+    return hist, bin_edges, actual_min, actual_max
 
 
 def main():
