@@ -72,6 +72,23 @@ def train_step(state, batch_x, batch_y) -> Tuple[nnx.Module, jax.Array]:
     return _train_step(state, batch_x, batch_y)
 
 
+def train_step_with_fitness(state, batch_x, batch_y):
+    """Training step function that returns both average fitness and individual fitness scores.
+    
+    This function performs a complete ES training step and returns individual fitness scores
+    for histogram analysis.
+    
+    Args:
+        state: Optimizer state containing the model
+        batch_x: Batch of input data
+        batch_y: Batch of target labels
+        
+    Returns:
+        Tuple of (average fitness, individual fitness scores)
+    """
+    return _train_step_with_fitness(state, batch_x, batch_y)
+
+
 @nnx.jit
 def _train_step(state, batch_x, batch_y):
     """JIT-compiled implementation of the training step.
@@ -93,6 +110,30 @@ def _train_step(state, batch_x, batch_y):
     state.update(grads)
     
     return avg_fitness
+
+
+@nnx.jit
+def _train_step_with_fitness(state, batch_x, batch_y):
+    """JIT-compiled implementation of the training step with individual fitness scores.
+    
+    Args:
+        state: Optimizer state containing the model
+        batch_x: Batch of input data
+        batch_y: Batch of target labels
+        
+    Returns:
+        Tuple of (average fitness, individual fitness scores)
+    """
+    sampling(state.model)
+    logits = populated_noise_fwd(state.model, batch_x)
+    fitness = compute_fitness(logits, batch_y)
+    avg_fitness = jnp.mean(fitness)
+    fitness_scores = fitness  # 保存原始适应度分数
+    fitness = centered_rank(fitness)
+    grads = calculate_gradients(state.model, fitness)
+    state.update(grads)
+    
+    return avg_fitness, fitness_scores
 
 
 # ----- The evaluate function has been moved to evolution.py -----

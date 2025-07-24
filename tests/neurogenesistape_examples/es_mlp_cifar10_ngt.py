@@ -24,6 +24,7 @@ setup_gpu_from_args()
 import jax
 import matplotlib.pyplot as plt
 from pathlib import Path
+import numpy as np
 
 # Try to import using the ngt alias, fall back to neurogenesistape if needed
 try:
@@ -35,8 +36,67 @@ except ImportError:
 # Import components
 from ngt import (
     ES_MLP, ES_Optimizer, ESConfig,
-    train_step, evaluate, load_cifar10
+    train_step, train_step_with_fitness, evaluate, load_cifar10
 )
+import numpy as np
+
+
+def plot_fitness_histogram(fitness_scores, generation, bins=20):
+    """绘制当前代的fitness分布直方图并返回直方图数据。
+    
+    Args:
+        fitness_scores: 当前代所有个体的适应度分数
+        generation: 当前代数
+        bins: 直方图区间数
+        
+    Returns:
+        tuple: (hist, bin_edges, min_val, max_val)
+    """
+    fitness_array = np.array(fitness_scores)
+    total_count = len(fitness_array)
+    
+    # 计算范围
+    min_val = float(fitness_array.min())
+    max_val = float(fitness_array.max())
+    
+    # 如果所有值相同，强制计算直方图
+    if min_val == max_val:
+        # 创建一个小的范围来强制计算直方图
+        range_val = max(abs(min_val) * 0.01, 1e-6)
+        min_val -= range_val
+        max_val += range_val
+        # 计算直方图
+        hist, bin_edges = np.histogram(fitness_array, bins=bins, range=(min_val, max_val))
+    else:
+        # 计算直方图
+        hist, bin_edges = np.histogram(fitness_array, bins=bins, range=(min_val, max_val))
+    
+    max_count = hist.max()
+    
+    print(f"[Gen {generation}] Fitness Histogram (range: {min_val:.2f} to {max_val:.2f}):")
+    
+    # 绘制直方图
+    bar_width = 40  # 最大条形宽度
+    for i in range(bins):
+        left_edge = bin_edges[i]
+        right_edge = bin_edges[i + 1]
+        count = hist[i]
+        percentage = (count / total_count) * 100 if total_count > 0 else 0
+        
+        # 计算条形长度
+        if max_count > 0:
+            bar_length = int((count / max_count) * bar_width)
+        else:
+            bar_length = 0
+        
+        # 绘制条形（使用固定宽度格式对齐）
+        bar = '█' * bar_length + '░' * (bar_width - bar_length)
+        print(f"  [{left_edge:7.2f}-{right_edge:7.2f}] {bar} {percentage:5.1f}% ({count})")
+    
+    print()
+    
+    # 返回直方图数据：(hist, bin_edges, min_val, max_val)
+    return hist, bin_edges, min_val, max_val
 
 
 def main():
@@ -94,6 +154,10 @@ def main():
     test_accuracies = []
     best_accuracies = []
     
+    # 用于保存每一代的直方图数据
+    histogram_data = []
+    bins = 20  # 直方图区间数
+    
     for g in range(1, cfg.generations + 1):
         # Create batch
         rng = jax.random.PRNGKey(g)  # New key for each generation
@@ -101,8 +165,21 @@ def main():
         batch_x = x_train[idx]
         batch_y = y_train[idx]
         
-        # Perform single training step using JIT-compiled function
-        train_fitness = train_step(state, batch_x, batch_y)
+        # Perform single training step using JIT-compiled function with fitness scores
+        train_fitness, fitness_scores = train_step_with_fitness(state, batch_x, batch_y)
+        
+        # 绘制当前代的fitness分布直方图并收集数据
+        hist, bin_edges, min_val, max_val = plot_fitness_histogram(fitness_scores, g, bins)
+        
+        # 保存直方图数据
+        histogram_data.append({
+            'generation': g,
+            'hist': hist,
+            'bin_edges': bin_edges,
+            'min_val': min_val,
+            'max_val': max_val,
+            'fitness_scores': np.array(fitness_scores)
+        })
         
         # Periodically evaluate and report
         if g % 10 == 0 or g == 1:
@@ -171,6 +248,22 @@ def main():
             f.write(f"{generations[i]}\t{train_fitnesses[i]:.6f}\t{test_accuracies[i]:.6f}\t{best_accuracies[i]:.6f}\n")
     
     print(f"Training data saved to: {data_filepath}")
+    
+    # 保存直方图数据到results文件夹
+    # 创建包含所有直方图数据的numpy数组
+    histogram_tensor = np.array([data['hist'] for data in histogram_data])
+    
+    # 保存直方图张量和相关元数据
+    histogram_file = results_dir / f"fitness_histograms_cifar10_{args.hidden}h_{args.gen}gen_{args.pop}pop.npz"
+    np.savez(histogram_file, 
+             histogram_tensor=histogram_tensor,
+             generations=[data['generation'] for data in histogram_data],
+             bin_edges=[data['bin_edges'] for data in histogram_data],
+             min_vals=[data['min_val'] for data in histogram_data],
+             max_vals=[data['max_val'] for data in histogram_data],
+             all_fitness_scores=[data['fitness_scores'] for data in histogram_data])
+    
+    print(f"Fitness histograms saved to: {histogram_file}")
     
     # Show the plot
     plt.show()

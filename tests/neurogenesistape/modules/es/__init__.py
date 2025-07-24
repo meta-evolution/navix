@@ -10,7 +10,7 @@ from neurogenesistape.modules.es.nn import ES_Linear, ES_MLP
 from neurogenesistape.modules.es.optimizer import ES_Optimizer
 
 # Import training utilities
-from neurogenesistape.modules.es.training import compute_fitness, train_step, ESConfig
+from neurogenesistape.modules.es.training import compute_fitness, train_step, train_step_with_fitness, ESConfig
 
 __all__ = [
     # Core ES components
@@ -23,5 +23,5 @@ __all__ = [
     'ES_Optimizer',
     
     # Training utilities
-    'compute_fitness', 'train_step', 'ESConfig'
+    'compute_fitness', 'train_step', 'train_step_with_fitness', 'ESConfig'
 ]

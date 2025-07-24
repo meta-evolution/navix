@@ -36,7 +36,7 @@ from neurogenesistape.modules.es import (
     # Optimizer
     ES_Optimizer,
     # Training utilities
-    compute_fitness, train_step, ESConfig
+    compute_fitness, train_step, train_step_with_fitness, ESConfig
 )
 
 # Import and re-export data utilities
@@ -63,7 +63,7 @@ __all__ = [
     'ES_Optimizer',
     
     # Training utilities
-    'compute_fitness', 'train_step', 'ESConfig',
+    'compute_fitness', 'train_step', 'train_step_with_fitness', 'ESConfig',
     
     # Data utilities
     'load_cifar10', 'load_cifar100', 'load_mnist', 'load_tiny_imagenet',
