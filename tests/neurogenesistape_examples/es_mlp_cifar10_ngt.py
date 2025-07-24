@@ -153,6 +153,10 @@ def main():
     bins = 30  # 直方图区间数
     
     for g in range(1, cfg.generations + 1):
+        # 打印当前代的sigma值（从ES模块中提取）
+        current_sigma = model.layers[0].kernel.noise_sigma  # 从第一层的ES_Tape中获取sigma值
+        print(f"[Gen {g:4d}] Current sigma: {current_sigma:.6f}")
+        
         # Create batch
         rng = jax.random.PRNGKey(g)  # New key for each generation
         idx = jax.random.choice(rng, x_train.shape[0], (cfg.batch_train,), replace=False)
