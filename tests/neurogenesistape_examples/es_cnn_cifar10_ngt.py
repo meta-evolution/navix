@@ -26,6 +26,7 @@ def setup_gpu_from_args():
 setup_gpu_from_args()
 
 import jax
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -102,6 +103,7 @@ def main():
     parser.add_argument("--sigma", type=float, default=0.05, help="Initial noise std")
     parser.add_argument("--min_sigma", type=float, default=0.01, help="Minimum noise std for sigma decay (default: 0.01)")
     parser.add_argument("--enable_sigma_decay", action="store_true", help="Enable sigma decay during training (default: False)")
+    parser.add_argument("--no_augmentation", action="store_true", help="Disable data augmentation (default: False, augmentation enabled)")
     parser.add_argument("--gpu", type=int, help="GPU device ID to use (e.g., 0, 1, 2, 3)")
 
     args = parser.parse_args()
@@ -116,13 +118,125 @@ def main():
     print(cfg)
     print("-------------------------")
     
-    # ----- Data Loading -----
-    print("Loading CIFAR-10 dataset...")
+    # ----- Data Loading with Enhanced Preprocessing -----
+    if args.no_augmentation:
+        print("Loading CIFAR-10 dataset without data augmentation...")
+    else:
+        print("Loading CIFAR-10 dataset with data augmentation...")
+    
     x_train, y_train, x_test, y_test = load_cifar10()
     
-    # Reshape data for CNN: (N, H, W, C) format
+    # Reshape for CNN (add channel dimension if needed)
+    if len(x_train.shape) == 2:  # If flattened
+        x_train = x_train.reshape(-1, 32, 32, 3)
+        x_test = x_test.reshape(-1, 32, 32, 3)
+    
+    print(f"Original training set: {x_train.shape}, labels: {y_train.shape}")
+    print(f"Original test set: {x_test.shape}, labels: {y_test.shape}")
+    print(f"Original pixel value range: [{x_train.min():.3f}, {x_train.max():.3f}]")
+    
+    # Data augmentation functions using JAX with JIT compilation and vmap
+    @jax.jit
+    def random_horizontal_flip(image, key, p=0.5):
+        """Randomly flip image horizontally with probability p"""
+        flip = jax.random.uniform(key) < p
+        return jnp.where(flip, jnp.fliplr(image), image)
+    
+    def random_crop_with_padding(image, key, crop_size=32, padding=4):
+        """Random crop with padding"""
+        # Add padding
+        padded = jnp.pad(image, ((padding, padding), (padding, padding), (0, 0)), mode='reflect')
+        
+        # Random crop using dynamic_slice for JIT compatibility
+        h, w = padded.shape[:2]
+        top = jax.random.randint(key, (), 0, h - crop_size + 1)
+        left = jax.random.randint(key, (), 0, w - crop_size + 1)
+        
+        return jax.lax.dynamic_slice(padded, (top, left, 0), (crop_size, crop_size, 3))
+    
+    # JIT compile with static arguments
+    random_crop_with_padding_jit = jax.jit(random_crop_with_padding, static_argnames=['crop_size', 'padding'])
+    
+    @jax.jit
+    def augment_single_image(image, key):
+        """Apply augmentation to a single image"""
+        key1, key2 = jax.random.split(key)
+        
+        # Reshape to (H, W, C)
+        img = image.reshape(32, 32, 3)
+        
+        # Apply augmentations
+        img = random_horizontal_flip(img, key1, p=0.5)
+        img = random_crop_with_padding_jit(img, key2, crop_size=32, padding=4)
+        
+        return img.flatten()
+    
+    @jax.jit
+    def normalize_to_minus_one_one(images):
+        """Normalize images to [-1, 1] range"""
+        return (images - 0.5) / 0.5
+    
+    if args.no_augmentation:
+        # No data augmentation - just normalize the data
+        print("Skipping data augmentation, only normalizing data to [-1, 1] range...")
+        x_train = normalize_to_minus_one_one(x_train.reshape(len(x_train), -1))
+        x_test = normalize_to_minus_one_one(x_test)
+        print(f"Final training set: {x_train.shape} (original data only)")
+    else:
+        # Apply data augmentation
+        print("Applying vectorized data augmentation to training set...")
+        key = jax.random.PRNGKey(42)
+        keys = jax.random.split(key, len(x_train))
+        
+        # Use vmap to vectorize augmentation across the batch
+        augment_batch = jax.vmap(augment_single_image, in_axes=(0, 0))
+        x_train_flat = x_train.reshape(len(x_train), -1)  # Flatten for augmentation
+        x_train_augmented = augment_batch(x_train_flat, keys)
+        
+        # Normalize original and augmented data to [-1, 1]
+        print("Normalizing data to [-1, 1] range...")
+        x_train_original = normalize_to_minus_one_one(x_train.reshape(len(x_train), -1))
+        x_train_augmented = normalize_to_minus_one_one(x_train_augmented)
+        x_test = normalize_to_minus_one_one(x_test)
+        
+        # Combine original and augmented data
+        print("Combining original and augmented training data...")
+        x_train_combined = jnp.concatenate([x_train_original, x_train_augmented], axis=0)
+        y_train_combined = jnp.concatenate([y_train, y_train], axis=0)
+        
+        # Shuffle the combined dataset
+        print("Shuffling combined training dataset...")
+        shuffle_key = jax.random.PRNGKey(123)
+        shuffle_indices = jax.random.permutation(shuffle_key, len(x_train_combined))
+        x_train = x_train_combined[shuffle_indices]
+        y_train = y_train_combined[shuffle_indices]
+        print(f"Final training set: {x_train.shape} (original + augmented data)")
+    
+    # Reshape back for CNN
     x_train = x_train.reshape(-1, 32, 32, 3)
     x_test = x_test.reshape(-1, 32, 32, 3)
+    
+    if args.no_augmentation:
+        print(f"Final training set: {x_train.shape}, labels: {y_train.shape}")
+        print(f"Test set: {x_test.shape}, labels: {y_test.shape}")
+        print(f"Training set size: {len(x_train)} samples (original data only)")
+    else:
+        print(f"Combined training set (original + augmented): {x_train.shape}, labels: {y_train.shape}")
+        print(f"Test set: {x_test.shape}, labels: {y_test.shape}")
+        print(f"Training set size doubled: {len(x_train)} samples (50,000 original + 50,000 augmented)")
+    
+    print(f"Final pixel value range: [{x_train.min():.3f}, {x_train.max():.3f}]")
+    print(f"Label range: [{y_train.min()}, {y_train.max()}]")
+    
+    # CIFAR-10 class names
+    classes = ('airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+    print(f"Classes: {', '.join(classes)}")
+    
+    if args.no_augmentation:
+        print("Data preprocessing completed (no augmentation)!")
+    else:
+        print("Data augmentation completed!")
+    print("="*60)
     
     # ----- Model Initialization -----
     print(f"\nInitializing CNN model: input_channels=3, num_classes=10")
