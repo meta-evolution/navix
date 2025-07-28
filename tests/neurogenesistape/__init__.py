@@ -32,7 +32,7 @@ from neurogenesistape.modules.es import (
     # Core ES modules
     ES_Module, ES_Tape, 
     # Neural network components
-    ES_Linear, ES_MLP,
+    ES_Linear, ES_MLP, ES_Conv2d, ES_CNN,
     # Optimizer
     ES_Optimizer,
     # Training utilities
@@ -57,7 +57,7 @@ __all__ = [
     'ES_Module', 'ES_Tape',
     
     # Neural network components
-    'ES_Linear', 'ES_MLP',
+    'ES_Linear', 'ES_MLP', 'ES_Conv2d', 'ES_CNN',
     
     # Optimizer
     'ES_Optimizer',

@@ -29,6 +29,57 @@ def _rnn_sequence_forward(sequence: jnp.ndarray, initial_hidden: jnp.ndarray,
     return outputs.transpose(1, 0, 2)
 
 
+class ES_Conv2d(nnx.Module):
+    """2D Convolutional layer using ES parameters."""
+    
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: Tuple[int, int], 
+                 strides: Tuple[int, int] = (1, 1), padding: str = 'SAME', rngs: nnx.rnglib.Rngs = None):
+        """Initialize an ES_Conv2d layer.
+        
+        Args:
+            in_channels: Number of input channels
+            out_channels: Number of output channels
+            kernel_size: Size of the convolutional kernel (height, width)
+            strides: Stride of the convolution (default: (1, 1))
+            padding: Padding mode ('SAME' or 'VALID', default: 'SAME')
+            rngs: Random number generator keys
+        """
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.strides = strides
+        self.padding = padding
+        
+        # Kernel shape: (kernel_height, kernel_width, in_channels, out_channels)
+        kernel_shape = (*kernel_size, in_channels, out_channels)
+        self.kernel = ES_Tape(kernel_shape, rngs)
+        self.bias = ES_Tape((out_channels,), rngs)
+    
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        """Forward pass through the convolutional layer.
+        
+        Args:
+            x: Input tensor of shape [batch_size, height, width, in_channels]
+            
+        Returns:
+            Output tensor of shape [batch_size, new_height, new_width, out_channels]
+        """
+        # Use JAX's lax.conv_general_dilated for convolution
+        # Dimension numbers: ('NHWC', 'HWIO', 'NHWC')
+        dimension_numbers = ('NHWC', 'HWIO', 'NHWC')
+        
+        conv_out = jax.lax.conv_general_dilated(
+            x,  # lhs (input)
+            self.kernel(),  # rhs (kernel)
+            window_strides=self.strides,
+            padding=self.padding,
+            dimension_numbers=dimension_numbers
+        )
+        
+        # Add bias
+        return conv_out + self.bias()
+
+
 class ES_Linear(nnx.Module):
     """Linear layer using ES parameters."""
     
@@ -113,6 +164,94 @@ class ES_MLP(nnx.Module):
         
         # Last layer without activation (for logits)
         return self.layers[-1](x)
+
+
+class ES_CNN(nnx.Module):
+    """Convolutional Neural Network using ES layers."""
+    
+    def __init__(self, input_channels: int = 3, num_classes: int = 10, rngs: nnx.rnglib.Rngs = None):
+        """Initialize an ES_CNN network.
+        
+        Args:
+            input_channels: Number of input channels (default: 3 for RGB)
+            num_classes: Number of output classes (default: 10)
+            rngs: Random number generator keys
+        """
+        self.input_channels = input_channels
+        self.num_classes = num_classes
+        
+        # Convolutional layers
+        self.conv1 = ES_Conv2d(input_channels, 32, (3, 3), rngs=rngs)
+        self.conv2 = ES_Conv2d(32, 64, (3, 3), rngs=rngs)
+        self.conv3 = ES_Conv2d(64, 64, (3, 3), rngs=rngs)
+        
+        # Fully connected layers
+        # For CIFAR-10 (32x32), after 3 conv layers with 2x2 pooling: 4x4x64 = 1024
+        self.fc1 = ES_Linear(1024, 64, rngs)
+        self.fc2 = ES_Linear(64, num_classes, rngs)
+        
+        # Store all layers for easy access
+        self.conv_layers = [self.conv1, self.conv2, self.conv3]
+        self.fc_layers = [self.fc1, self.fc2]
+        self.all_layers = self.conv_layers + self.fc_layers
+    
+    def enable_sigma_decay(self, enabled: bool = True):
+        """Enable or disable sigma decay for all ES modules in the network.
+        
+        Args:
+            enabled: Whether to enable sigma decay (default: True)
+        """
+        for layer in self.all_layers:
+            if hasattr(layer, 'kernel'):
+                layer.kernel.set_sigma_decay(enabled)
+            if hasattr(layer, 'bias'):
+                layer.bias.set_sigma_decay(enabled)
+    
+    def set_attributes(self, **kwargs):
+        """Set attributes for all ES modules in the network.
+        
+        Args:
+            **kwargs: Attributes to set (e.g., popsize, noise_sigma, min_sigma, deterministic)
+        """
+        for layer in self.all_layers:
+            if hasattr(layer, 'kernel'):
+                for key, value in kwargs.items():
+                    if hasattr(layer.kernel, key):
+                        setattr(layer.kernel, key, value)
+            if hasattr(layer, 'bias'):
+                for key, value in kwargs.items():
+                    if hasattr(layer.bias, key):
+                        setattr(layer.bias, key, value)
+    
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        """Forward pass through the CNN.
+        
+        Args:
+            x: Input tensor of shape [batch_size, height, width, channels]
+            
+        Returns:
+            Output tensor of shape [batch_size, num_classes]
+        """
+        # First conv block: Conv -> ReLU -> MaxPool
+        x = jax.nn.relu(self.conv1(x))
+        x = jax.lax.reduce_window(x, -jnp.inf, jax.lax.max, (1, 2, 2, 1), (1, 2, 2, 1), 'VALID')
+        
+        # Second conv block: Conv -> ReLU -> MaxPool
+        x = jax.nn.relu(self.conv2(x))
+        x = jax.lax.reduce_window(x, -jnp.inf, jax.lax.max, (1, 2, 2, 1), (1, 2, 2, 1), 'VALID')
+        
+        # Third conv block: Conv -> ReLU -> MaxPool
+        x = jax.nn.relu(self.conv3(x))
+        x = jax.lax.reduce_window(x, -jnp.inf, jax.lax.max, (1, 2, 2, 1), (1, 2, 2, 1), 'VALID')
+        
+        # Flatten for fully connected layers
+        x = x.reshape(x.shape[0], -1)
+        
+        # Fully connected layers
+        x = jax.nn.relu(self.fc1(x))
+        x = self.fc2(x)  # No activation for logits
+        
+        return x
 
 
 class ES_RNN(nnx.Module):

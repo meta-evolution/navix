@@ -1,4 +1,4 @@
-"""Example of using ES-MLP on CIFAR-10 with the NGT package alias."""
+"""Example of using ES-CNN on CIFAR-10 with the NGT package alias."""
 
 import argparse
 import sys
@@ -34,7 +34,7 @@ import neurogenesistape as ngt
 
 # Import components
 from ngt import (
-    ES_MLP, ES_Optimizer, ESConfig,
+    ES_CNN, ES_Optimizer, ESConfig,
     train_step, train_step_with_fitness, evaluate, load_cifar10
 )
 import numpy as np
@@ -95,8 +95,7 @@ def plot_fitness_histogram(fitness_scores, generation, bins=20):
 
 def main():
     # ----- Command Line Arguments -----
-    parser = argparse.ArgumentParser(description='CIFAR-10 ES-MLP Classifier using NGT package')
-    parser.add_argument("--hidden", type=int, default=256, help="Hidden layer size (default: 256)")
+    parser = argparse.ArgumentParser(description='CIFAR-10 ES-CNN Classifier using NGT package')
     parser.add_argument("--gen", type=int, default=200, help="Number of generations (default: 200)")
     parser.add_argument("--pop", type=int, default=2000, help="Population size (default: 2000, must be even)")
     parser.add_argument("--lr", type=float, default=0.05, help="Learning rate")
@@ -121,16 +120,17 @@ def main():
     print("Loading CIFAR-10 dataset...")
     x_train, y_train, x_test, y_test = load_cifar10()
     
-    # ----- Model Initialization -----
-    print(f"\nInitializing model: input={x_train.shape[1]}, hidden={args.hidden}, output=10")
+    # Reshape data for CNN: (N, H, W, C) format
+    x_train = x_train.reshape(-1, 32, 32, 3)
+    x_test = x_test.reshape(-1, 32, 32, 3)
     
-    # Create model with 3 layers: input -> hidden -> hidden -> output
-    layer_sizes = [x_train.shape[1], args.hidden, args.hidden, 10]
+    # ----- Model Initialization -----
+    print(f"\nInitializing CNN model: input_channels=3, num_classes=10")
     
     # Use fixed random seed for reproducibility
     from flax import nnx
     rngs = nnx.Rngs(42)
-    model = ES_MLP(layer_sizes, rngs)
+    model = ES_CNN(input_channels=3, num_classes=10, rngs=rngs)
     model.set_attributes(popsize=cfg.pop_size, noise_sigma=cfg.sigma, min_sigma=args.min_sigma)
     
     # Enable sigma decay for all ES modules (configurable via command line)
@@ -160,12 +160,12 @@ def main():
     for g in range(1, cfg.generations + 1):
 
         # 打印当前代的sigma值（从ES模块中提取）
-        current_sigma = model.layers[0].kernel.noise_sigma  # 从第一层的ES_Tape中获取sigma值
+        current_sigma = model.conv1.kernel.noise_sigma  # 从第一层的ES_Tape中获取sigma值
 
         # # 在训练后期（90%进度时）将sigma增大一倍
         # if current_sigma < 0.05:
         #     # 将所有层的sigma值增大
-        #     for layer in model.layers:
+        #     for layer in model.all_layers:
         #         if hasattr(layer, 'kernel') and hasattr(layer.kernel, 'noise_sigma'):
         #             layer.kernel.noise_sigma = args.sigma
         #         if hasattr(layer, 'bias') and hasattr(layer.bias, 'noise_sigma'):
@@ -173,7 +173,7 @@ def main():
         #     print(f"[Gen {g:4d}] *** SIGMA BOOST: Increased sigma by 2x at 90% progress ***")
         
         # 打印当前代的sigma值（从ES模块中提取）
-        current_sigma = model.layers[0].kernel.noise_sigma  # 从第一层的ES_Tape中获取sigma值
+        current_sigma = model.conv1.kernel.noise_sigma  # 从第一层的ES_Tape中获取sigma值
         print(f"[Gen {g:4d}] Current sigma: {current_sigma:.6f}")
         
         # Create batch
@@ -248,19 +248,19 @@ def main():
     plt.tight_layout()
     
     # Generate filename with parameters
-    filename = f"es_mlp_h{args.hidden}_g{args.gen}_p{args.pop}_results.png"
+    filename = f"es_cnn_g{args.gen}_p{args.pop}_results.png"
     filepath = results_dir / filename
     
     plt.savefig(filepath, dpi=300, bbox_inches='tight')
     print(f"Training results plot saved to: {filepath}")
     
     # Also save the raw data as a text file
-    data_filename = f"es_mlp_h{args.hidden}_g{args.gen}_p{args.pop}_data.txt"
+    data_filename = f"es_cnn_g{args.gen}_p{args.pop}_data.txt"
     data_filepath = results_dir / data_filename
     
     with open(data_filepath, 'w') as f:
-        f.write("# ES-MLP CIFAR-10 Training Results\n")
-        f.write(f"# Hidden size: {args.hidden}, Generations: {args.gen}, Population: {args.pop}\n")
+        f.write("# ES-CNN CIFAR-10 Training Results\n")
+        f.write(f"# Generations: {args.gen}, Population: {args.pop}\n")
         f.write(f"# Final best accuracy: {best_acc*100:.2f}%\n")
         f.write("# Generation\tTrain_Fitness\tTest_Accuracy\tBest_Accuracy\n")
         for i in range(len(generations)):
@@ -273,7 +273,7 @@ def main():
     histogram_tensor = np.array([data['hist'] for data in histogram_data])
     
     # 保存直方图张量和相关元数据
-    histogram_file = results_dir / f"fitness_histograms_cifar10_{args.hidden}h_{args.gen}gen_{args.pop}pop.npz"
+    histogram_file = results_dir / f"fitness_histograms_cifar10_cnn_{args.gen}gen_{args.pop}pop.npz"
     np.savez(histogram_file, 
              histogram_tensor=histogram_tensor,
              generations=[data['generation'] for data in histogram_data],
