@@ -82,6 +82,22 @@ class ES_MLP(nnx.Module):
             if hasattr(layer, 'bias'):
                 layer.bias.set_sigma_decay(enabled)
     
+    def set_attributes(self, **kwargs):
+        """Set attributes for all ES modules in the network.
+        
+        Args:
+            **kwargs: Attributes to set (e.g., popsize, noise_sigma, min_sigma, deterministic)
+        """
+        for layer in self.layers:
+            if hasattr(layer, 'kernel'):
+                for key, value in kwargs.items():
+                    if hasattr(layer.kernel, key):
+                        setattr(layer.kernel, key, value)
+            if hasattr(layer, 'bias'):
+                for key, value in kwargs.items():
+                    if hasattr(layer.bias, key):
+                        setattr(layer.bias, key, value)
+    
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         """Forward pass through the MLP.
         

@@ -101,6 +101,8 @@ def main():
     parser.add_argument("--pop", type=int, default=2000, help="Population size (default: 2000, must be even)")
     parser.add_argument("--lr", type=float, default=0.05, help="Learning rate")
     parser.add_argument("--sigma", type=float, default=0.05, help="Initial noise std")
+    parser.add_argument("--min_sigma", type=float, default=0.01, help="Minimum noise std for sigma decay (default: 0.01)")
+    parser.add_argument("--enable_sigma_decay", action="store_true", help="Enable sigma decay during training (default: False)")
     parser.add_argument("--gpu", type=int, help="GPU device ID to use (e.g., 0, 1, 2, 3)")
 
     args = parser.parse_args()
@@ -129,10 +131,10 @@ def main():
     from flax import nnx
     rngs = nnx.Rngs(42)
     model = ES_MLP(layer_sizes, rngs)
-    model.set_attributes(popsize=cfg.pop_size, noise_sigma=cfg.sigma)
+    model.set_attributes(popsize=cfg.pop_size, noise_sigma=cfg.sigma, min_sigma=args.min_sigma)
     
-    # Enable sigma decay for all ES modules
-    model.enable_sigma_decay(True)
+    # Enable sigma decay for all ES modules (configurable via command line)
+    model.enable_sigma_decay(args.enable_sigma_decay)
     
     # Initialize optimizer
     import optax

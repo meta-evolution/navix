@@ -14,6 +14,7 @@ class ES_Module(EvoModule):
 
     noise_sigma: float = 0.1
     enable_sigma_decay: bool = False
+    min_sigma: float = 0.01
     
     def set_sigma_decay(self, enabled: bool = True):
         """Set sigma decay for this ES module.
@@ -70,7 +71,7 @@ class ES_Tape(ES_Module):
         # Apply sigma decay if enabled
         self.noise_sigma = jnp.where(
             self.enable_sigma_decay,
-            jnp.maximum(jnp.multiply(self.noise_sigma, 0.999), 0.01),
+            jnp.maximum(jnp.multiply(self.noise_sigma, 0.999), self.min_sigma),
             self.noise_sigma
         )
         # Generate symmetric noise (half positive, half negative)
