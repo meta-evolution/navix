@@ -55,7 +55,7 @@ def plot_fitness_histogram(fitness_scores, generation, bins=20):
     total_count = len(fitness_array)
     
     # 使用固定范围[-7, 0]来保持直方图的一致性
-    min_val = -6.0
+    min_val = -100.0
     max_val = 0.0
     
     # 计算直方图（使用固定范围）

@@ -141,7 +141,8 @@ def evaluate_population_fitness(env, agent, batch_timesteps, max_steps=500, gene
 def plot_fitness_histogram(fitness_scores, generation, bins=10):
     """绘制fitness分布的命令行直方图并返回直方图数据"""
     fitness_array = np.array(fitness_scores)
-    min_val, max_val = fitness_array.min(), fitness_array.max()
+    # min_val, max_val = fitness_array.min(), fitness_array.max()
+    min_val, max_val = -500, 0
     total_count = len(fitness_array)
     
     # 强制计算直方图，即使所有值相同

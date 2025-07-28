@@ -71,7 +71,7 @@ class ES_Tape(ES_Module):
         # Apply sigma decay if enabled
         self.noise_sigma = jnp.where(
             self.enable_sigma_decay,
-            jnp.maximum(jnp.multiply(self.noise_sigma, 0.999), self.min_sigma),
+            jnp.maximum(jnp.multiply(self.noise_sigma, 0.9999), self.min_sigma),
             self.noise_sigma
         )
         # Generate symmetric noise (half positive, half negative)
